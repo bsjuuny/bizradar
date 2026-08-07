@@ -51,7 +51,14 @@ export const getCompany = cache(async (): Promise<CompanyMembership | null> => {
     .eq("user_id", user.id)
     .maybeSingle();
 
-  if (error || !data) return null;
+  // A real query error (e.g. a transient Supabase outage) must not be treated the same
+  // as "this user has no company yet" - that conflation was a live-found bug: it
+  // silently redirected an existing member to /onboarding during an outage instead of
+  // showing an error, risking a duplicate company being created. `.maybeSingle()`
+  // itself reports zero rows as `{ data: null, error: null }`, so `error` here only
+  // ever means a genuine failure, never "not found".
+  if (error) throw new Error(`Failed to load company: ${error.message}`);
+  if (!data) return null;
   return data as unknown as CompanyMembership;
 });
 

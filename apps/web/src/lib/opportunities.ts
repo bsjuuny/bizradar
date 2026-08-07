@@ -69,6 +69,12 @@ function escapeLikeTerm(term: string): string {
 // match_scores is company-scoped by RLS (see supabase/migrations - policy compares
 // against auth_company_id()), so this never needs to filter by company explicitly -
 // a user simply can't see another company's rows regardless of the query.
+//
+// Degrades gracefully on error instead of throwing: match_scores is a supplementary
+// enrichment (like AI analysis), not core opportunity data - see
+// docs/DATA_PIPELINE.md#failure-isolation's "shown without X, not hidden" principle. A
+// match_scores-specific failure must not take down the whole opportunities list via
+// error.tsx when the opportunities themselves loaded fine.
 async function getMatchTotals(
   supabase: Awaited<ReturnType<typeof createClient>>,
   opportunityIds: string[],
@@ -78,7 +84,10 @@ async function getMatchTotals(
     .from("match_scores")
     .select("opportunity_id, total_score")
     .in("opportunity_id", opportunityIds);
-  if (error) throw new Error(`Failed to load match scores: ${error.message}`);
+  if (error) {
+    console.error("Failed to load match scores, showing opportunities without them", error);
+    return new Map();
+  }
   return new Map((data ?? []).map((row) => [row.opportunity_id, row.total_score]));
 }
 
@@ -164,7 +173,11 @@ export async function getOpportunity(id: string): Promise<OpportunityDetail | nu
     )
     .eq("opportunity_id", id)
     .maybeSingle();
-  if (matchError) throw new Error(`Failed to load match score: ${matchError.message}`);
+  // Same failure-isolation rule as getMatchTotals above: a match_scores-specific error
+  // must not hide an opportunity that otherwise loaded fine.
+  if (matchError) {
+    console.error("Failed to load match score, showing the opportunity without it", matchError);
+  }
 
   return {
     ...raw,

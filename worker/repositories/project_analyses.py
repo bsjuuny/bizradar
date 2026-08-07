@@ -42,12 +42,28 @@ def upsert_success(
 
 
 def upsert_failure(opportunity_id: str, content_hash: str, error_message: str) -> None:
+    """`prompt_version` is deliberately set to `None`, not left out of the payload.
+
+    An upsert only touches columns present in the payload - if `prompt_version` were
+    omitted, a FAILED row would keep whatever version it last succeeded (or failed) at.
+    That's a real bug found live: a reanalysis triggered purely by a `content_hash`
+    change (not a prompt_version bump) that then fails leaves `analyzed_content_hash`
+    matching the candidate and `prompt_version` still equal to the current version, so
+    `get_pending_opportunities()`'s "needs reanalysis" check (hash OR version mismatch)
+    is permanently false - the opportunity silently drops out of the pipeline until
+    content changes *again* or the prompt bumps *again*. Forcing `prompt_version` to
+    `None` on every failure guarantees a mismatch against any real current version, so a
+    FAILED row is always retried on the next scheduled run - deliberately not
+    distinguishing "transient infra failure" from "genuine bad extraction" here, since
+    the alternative (silently dropping opportunities) is worse than a bounded amount of
+    repeat Ollama calls on real failures."""
     client = get_service_client()
     row = {
         "opportunity_id": opportunity_id,
         "status": "FAILED",
         "analyzed_at": datetime.now(UTC).isoformat(),
         "analyzed_content_hash": content_hash,
+        "prompt_version": None,
         "error_message": error_message[:2000],
     }
     client.table("project_analyses").upsert(row, on_conflict="opportunity_id").execute()
