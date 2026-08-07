@@ -1,6 +1,6 @@
 # Database
 
-## Status: Phase 1-4 tables implemented and verified against the live project; the rest
+## Status: Phase 1-5 tables implemented and verified against the live project; the rest
 are NOT_IMPLEMENTED until their phase.
 
 - `20260807120000_phase1_company_profile.sql` + `20260807130000_phase1_grants.sql`:
@@ -15,8 +15,11 @@ are NOT_IMPLEMENTED until their phase.
 - `20260807170000_phase4_project_analyses.sql` + `20260807180000_phase4_analyzed_content_hash.sql`:
   `opportunities.category`, `project_analyses`. Verified live via
   `worker/jobs/analyze_job.py` against a real local Ollama instance + this project.
-
-See `docs/VERIFICATION_REPORT.md` for what was actually run.
+- `20260807190000_phase5_match_engine.sql` + `20260807200000_phase5_technologies_seed.sql`:
+  `companies` match-profile columns, `project_analyses` experience/qualification columns,
+  `match_scores`, a starter `technologies` vocabulary. Verified live via
+  `worker/jobs/match_job.py` against a real company profile + real analyzed
+  opportunities.
 
 ## Migration workflow
 
@@ -33,7 +36,10 @@ Implemented (Phase 1):
 
 - `technologies` - shared lookup for company tech stack (and later matching).
 - `companies` - one row per customer company (name, size band, industry, region,
-  business type, founded year).
+  business type, founded year). Phase 5 added the Match Engine profile fields:
+  `budget_min`/`budget_max` (nullable = no preference, treated as "flexible" not
+  "unknown" - see `docs/DATA_PIPELINE.md`), `experience_years` (default 0),
+  `qualifications` (`text[]`, default `{}`).
 - `company_members` - links `auth.users` to `companies` (`user_id` is the primary key -
   a user belongs to at most one company for MVP scope, no invite flow).
 - `company_technologies` - join table for a company's declared tech stack.
@@ -53,14 +59,21 @@ Implemented (Phase 1):
   `status` (`PENDING`/`SUCCESS`/`FAILED`), `project_type`, `technologies`/
   `required_roles`/`requirements`/`risks` (jsonb), `summary`, `model`, `model_version`,
   `prompt_version`, `analyzed_at`, `analyzed_content_hash` (the `opportunities
-  .content_hash` this row was computed against - re-analysis only happens when it
-  changes), `error_message`. RLS: any authenticated user can `select`; only
-  `service_role` writes.
+  .content_hash` this row was computed against - re-analysis only happens when either it
+  or `prompt_version` changes), `error_message`. Phase 5 added
+  `min_experience_years`/`required_qualifications` (AI-extracted, feed the Match Engine).
+  RLS: any authenticated user can `select`; only `service_role` writes.
+- `match_scores` - one row per (company, opportunity), `unique(company_id,
+  opportunity_id)`: 7 category scores (`technology_score` 0-30, `business_type_score`
+  0-20, `budget_score`/`experience_score` 0-15, `qualification_score` 0-10,
+  `region_score`/`schedule_score` 0-5) plus a generated `total_score` column (Postgres
+  sums the 7 for you - can't drift out of sync). RLS: `company_id = auth_company_id()`
+  only (not public like `opportunities`/`project_analyses` - a match score is specific
+  to one company's fit, not general-purpose data). See
+  `docs/DATA_PIPELINE.md#match-engine`.
 
 Planned (later phases, see `docs/MVP_SCOPE.md`):
 
-- `match_scores` - per-company, per-opportunity score breakdown (see
-  `docs/DATA_PIPELINE.md#match-engine`). (Phase 5)
 - `support_programs` - BizInfo/K-Startup normalized programs + eligibility status. (Phase 6)
 - `saved_opportunities`, `watch_conditions` - per-company user state. (Phase 8)
 
@@ -113,6 +126,30 @@ Planned (later phases, see `docs/MVP_SCOPE.md`):
   the DB level, but the client library still types the embed as an array - normalize it
   (`Array.isArray(x) ? x[0] ?? null : x`) rather than assuming the runtime shape matches
   the "obviously 1:1" schema.
+
+## Gotchas hit while implementing Phase 5 (see `docs/TROUBLESHOOTING.md` for full detail)
+
+- A live-only bug (no unit test caught it, because unit tests construct
+  `OpportunityRequirements` directly with real `datetime` objects): PostgREST returns
+  `timestamptz` columns as plain JSON strings. `worker/repositories/match_scores.py`
+  passed `opportunities.bid_close_at` straight into `OpportunityRequirements` (typed
+  `datetime | None`) without parsing it, and the very first opportunity that had a
+  non-null deadline crashed `worker/matching/engine.py`'s schedule scoring with
+  `TypeError: unsupported operand type(s) for -: 'str' and 'datetime.datetime'`. Fixed
+  with an explicit `datetime.fromisoformat()` parse in the repository layer, and added a
+  unit test using the exact string PostgREST returned.
+- A live analysis run (before Phase 5's schema even existed) showed a real LLM failure
+  mode: `required_qualifications` came back with the same certification name repeated
+  ~15 times, truncated mid-string, and the *next* item then timed out - almost certainly
+  the same repetition loop costing enough tokens to blow the budget. Not a Phase 5
+  finding exactly, but it's what motivated adding `maxItems` to every array in the
+  extraction JSON schema and an order-preserving dedupe validator on `ProjectExtraction`
+  - see `docs/DATA_PIPELINE.md`.
+- `companies.business_type` is free text (from Phase 1's onboarding form), not an enum,
+  while `project_analyses.project_type` is a controlled enum. Rather than migrate an
+  already-shipped form/column, Business Type matching uses keyword fuzzy-matching
+  (`worker/matching/engine.py:BUSINESS_TYPE_KEYWORDS`) - a deliberate, documented
+  trade-off, not an oversight.
 
 ## RLS (must pass before Phase 1 is considered done)
 

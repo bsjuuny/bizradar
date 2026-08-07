@@ -136,13 +136,41 @@ test("detail page shows AI analysis for an analyzed opportunity", async ({ page,
     },
   });
 
+  await request.post(`${SUPABASE_URL}/rest/v1/match_scores`, {
+    headers,
+    data: {
+      company_id: companyId,
+      opportunity_id: opportunityId,
+      technology_score: 30,
+      business_type_score: 20,
+      budget_score: 15,
+      experience_score: 0,
+      qualification_score: 10,
+      region_score: 5,
+      schedule_score: 5,
+    },
+  });
+
   try {
     await page.goto(`/opportunities/${opportunityId}`);
     await expect(page.getByRole("heading", { name: "AI 분석" })).toBeVisible();
     await expect(page.getByText("E2E 테스트용 요약입니다.")).toBeVisible();
     await expect(page.getByText("Python", { exact: false })).toBeVisible();
     await expect(page.getByText("백엔드 개발자")).toBeVisible();
+
+    // 30+20+15+0+10+5+5 = 85
+    await expect(page.getByText("매칭 85점")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Company Match" })).toBeVisible();
+    await expect(page.getByText("0 / 15")).toBeVisible(); // experience_score, deliberately 0
+
+    // The list page's badge for this same opportunity, scoped to this company only.
+    await page.goto("/opportunities?category=LIKELY_IT");
+    const row = page.locator("tr", { hasText: "E2E 테스트용 AI 챗봇 구축 용역" });
+    await expect(row.getByText("매칭 85점")).toBeVisible();
   } finally {
+    await request.delete(`${SUPABASE_URL}/rest/v1/match_scores?opportunity_id=eq.${opportunityId}`, {
+      headers,
+    });
     await request.delete(`${SUPABASE_URL}/rest/v1/project_analyses?opportunity_id=eq.${opportunityId}`, {
       headers,
     });

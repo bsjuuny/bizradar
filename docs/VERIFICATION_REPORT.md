@@ -516,3 +516,126 @@ match genuinely correct (and more observable) job behavior.
 | Tests (Phase 0-4 scope) | PASS (web unit: 8/8, worker: 43/43, RLS: 12/12, e2e: 8/8) |
 | Railway Ready | PARTIAL (`/api/health` exists and builds; env-var-driven; never deployed to Railway) |
 | PM2 Worker Ready | PASS (`g2b-collect` + `analyze` both registered and boot-verified this phase) |
+
+---
+
+# Phase 5: Match Engine
+
+## Commands / runs actually executed
+
+| Step | Result |
+|---|---|
+| `npx supabase db push --dry-run` / `db lint` / `db push` (match_engine schema) | PASS |
+| `npx supabase db push --dry-run` / `db lint` / `db push` (technologies seed) | PASS |
+| `pytest worker/tests/test_match_engine.py` | PASS - 20/20, incl. exact boundary totals 49/50/64/65/79/80/100 |
+| `pytest worker/tests/test_match_scores_repository.py` | PASS - 2/2 (`_parse_datetime` incl. the exact PostgREST string that crashed live) |
+| `pytest worker/tests/test_match_job.py` | PASS - 3/3 |
+| `pytest` (full worker suite) | PASS - 70/70 |
+| `ruff check worker` / `ruff format --check worker` | PASS |
+| `mypy worker` | PASS - no issues in 40 source files |
+| Live: first `match_job.run()` against a real opportunity with a non-null `bid_close_at` | FAIL - `TypeError: unsupported operand type(s) for -: 'str' and 'datetime.datetime'` |
+| Live: `match_job.run()` again after the `_parse_datetime` fix | PASS - scores computed and persisted for both real analyzed opportunities |
+| Live: temporary realistic company profile ("Live Verify Co") -> `match_job.run()` -> manual score verification -> cleanup | PASS - all 7 category scores matched hand calculation, incl. `qualification_score = 0` (opportunity required 5 quals, company had 1) |
+| `npm run lint` / `typecheck` / `test:run` / `build` (apps/web) | PASS |
+| `npm run test:e2e` (10 tests: 8 existing + 2 new in `settings.spec.ts`, `opportunities.spec.ts` extended) | PASS - 10/10 |
+
+## Errors encountered and fixed this phase
+
+1. First live `match_job.run()` crashed on the second opportunity (the first had
+   `bid_close_at = null` and short-circuited fine): PostgREST returns `timestamptz`
+   columns as plain JSON strings, and `worker/repositories/match_scores.py` passed
+   `opportunities.bid_close_at` straight into `OpportunityRequirements` (typed
+   `datetime | None`) without parsing it. Fixed with an explicit
+   `datetime.fromisoformat()` parse; added a regression test using the exact string
+   PostgREST returned (`"2026-08-19T10:00:00+00:00"`). Re-ran live - succeeded.
+2. A live analysis run (schema work feeding this phase, not the Match Engine itself)
+   showed `required_qualifications` repeating the same value ~15 times before truncating
+   mid-string, with the next field then timing out at 300s. Fixed with `maxItems` on
+   every array field in the Ollama JSON schema and an explicit anti-duplication prompt
+   instruction (`PROMPT_VERSION` v2 -> v3). A follow-up live re-run showed the timeout was
+   gone but content-level duplication partially persisted within the now-bounded array;
+   added an order-preserving dedupe `field_validator` on `ProjectExtraction`
+   (`PROMPT_VERSION` v3 -> v4). Re-ran live once more - clean, distinct entries.
+3. mypy: test helpers `full_company(**overrides)`/`full_opportunity(**overrides)` built
+   via `dict(...) + .update() + **base` were inferred as `dict[str, object]`, incompatible
+   with the dataclass constructors. Fixed by switching to module-level `_FULL_COMPANY`/
+   `_FULL_OPPORTUNITY` instances + `dataclasses.replace(_FULL_COMPANY, **overrides)`.
+4. `test_boundary_49` asserted a total of 49 but computed 54.0 - the comment's arithmetic
+   forgot that `schedule_score` defaults to a full 5 in `full_opportunity()`. Fixed the
+   tech-unit count (9 -> 4) and corrected the comment, not the assertion.
+5. mypy: `upsert_match_score`'s row dict was inferred too narrowly for the `.upsert()` row
+   type. Fixed with an explicit `row: dict[str, Any]` annotation, matching the pattern
+   already used elsewhere in the repository layer.
+6. TypeScript: `apps/web/src/lib/opportunities.ts`'s `getOpportunity()` built the
+   `match_scores` `.select(...)` string via concatenation, which broke Supabase's
+   TypeScript client type inference (`GenericStringError`, two `tsc` errors on
+   `total_score`). Fixed by rewriting it as a single non-concatenated string literal.
+
+No test was weakened or skipped to reach green; #1, #2, and #6 are real bugs found only
+by live verification (offline unit tests can't reproduce a live PostgREST response shape
+or a real model's failure mode), fixed at the root cause with a regression test added
+where reproducible offline (#1). #3-#5 are test/type-annotation fixes, not product bugs.
+
+## What Phase 5 built
+
+- **Schema**: `companies.budget_min`/`budget_max`/`experience_years`/`qualifications`,
+  `project_analyses.min_experience_years`/`required_qualifications`, `match_scores`
+  (7 check-constrained category columns + a generated `total_score`), a ~33-entry
+  `technologies` seed. RLS: `match_scores` scoped to `company_id = auth_company_id()`
+  only (not public like `opportunities`) - see `docs/DATABASE.md`.
+- **Match Engine**: `worker/matching/engine.py` - pure scoring functions, no I/O. See
+  `docs/DATA_PIPELINE.md#match-engine-implemented-phase-5-rule-based-no-llm` for the full
+  point breakdown and design rules.
+- **Repository + job**: `worker/repositories/match_scores.py` (fetch companies/analyzed
+  opportunities, upsert scores), `worker/jobs/match_job.py` (recomputes every
+  company x analyzed-opportunity pair every run), registered every 15 minutes in
+  `worker/scheduler/main.py`.
+- **AI schema extension**: `ProjectExtraction` gained `min_experience_years`/
+  `required_qualifications` (`PROMPT_VERSION` v1 -> v4, incl. the `maxItems`/dedupe fixes
+  above), `get_pending_opportunities()` now also re-analyzes on a `prompt_version`
+  mismatch, not just a `content_hash` mismatch.
+- **Web**: `/settings` (Company Match profile: tech stack checkboxes, budget range,
+  experience, qualifications), `MatchScoreBadge` on the opportunities list and detail
+  page, a "Company Match" breakdown section on the detail page (all 7 category scores).
+- **Tests**: 25 new worker tests (engine boundary/scenario tests, repository, job - all
+  offline except the live runs above), 2 new e2e tests (`settings.spec.ts`), plus the
+  `opportunities.spec.ts` "AI 분석" test extended to seed and assert a match score.
+
+## Known limitations
+
+- `companies.business_type` is free text (Phase 1's onboarding form), not an enum, while
+  `project_analyses.project_type` is a controlled enum - Business Type matching uses
+  keyword fuzzy-matching (`BUSINESS_TYPE_KEYWORDS`), a deliberate trade-off documented in
+  `docs/DATABASE.md`, not a migration of the already-shipped form.
+- Qualification matching is strict all-or-nothing (`required.issubset(company
+  .qualifications)`) - a company missing even one required certification scores 0 in that
+  category, by design (a missing mandatory certification is a real disqualifier), not
+  partial credit.
+- `match_scores` only exists for `(company, opportunity)` pairs where the opportunity has
+  a `SUCCESS` analysis - unanalyzed or `FAILED` opportunities have no match score yet,
+  consistent with `docs/DATA_PIPELINE.md`'s RAW -> NORMALIZED -> ANALYZED -> MATCHED
+  pipeline order.
+- No UI sort/filter by match score yet (e.g. "show only >= 80") - out of this phase's
+  scope, the score is currently display-only.
+
+## Completion status table (supersedes the Phase 4 table above for changed rows)
+
+| Component | Status |
+|---|---|
+| Web Build | PASS |
+| Authentication | PASS (login/logout real, e2e-tested; signup's happy path NOT TESTED - needs real email click-through) |
+| Company Profile | PASS (creation, RLS-scoped read, e2e-tested; Phase 5 added match-profile fields via `/settings`, e2e-tested) |
+| G2B Collector | PASS (live-verified against the real API + real DB, idempotent re-run confirmed, 12/12 unit tests) |
+| Project Normalization | PASS (G2B RAW->NORMALIZED; BizInfo/K-Startup normalization NOT_IMPLEMENTED - Phase 6) |
+| Project UI | PASS (list/search/pagination/detail/empty/error/not-found + category filter + AI analysis + match score display, e2e-tested against real data) |
+| AI Analysis | PASS (rule filter + OllamaProvider live-verified against real Ollama + real DB; quality bounded by input richness - see Phase 4 known limitations) |
+| Match Engine | PASS (`worker/matching/engine.py` live-verified against a real company profile + real analyzed opportunities; 25/25 unit tests incl. exact boundary totals) |
+| Support Collector | NOT TESTED (not implemented - Phase 6) |
+| Support Matching | NOT TESTED (not implemented - Phase 6) |
+| Market Aggregation | NOT TESTED (not implemented - Phase 7) |
+| Saved | NOT TESTED (not implemented - Phase 8) |
+| Watch | NOT TESTED (not implemented - Phase 8) |
+| RLS | PASS (12/12 Phase 1 checks + opportunities/project_analyses/match_scores read/write policies live-exercised) |
+| Tests (Phase 0-5 scope) | PASS (web unit: 8/8, worker: 70/70, RLS: 12/12, e2e: 10/10) |
+| Railway Ready | PARTIAL (`/api/health` exists and builds; env-var-driven; never deployed to Railway) |
+| PM2 Worker Ready | PASS (`g2b-collect` + `analyze` + `match` all registered in `worker/scheduler/main.py`; boot-verified in Phases 2/4) |

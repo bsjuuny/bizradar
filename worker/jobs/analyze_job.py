@@ -37,7 +37,9 @@ def _build_prompt_text(opportunity: dict) -> str:
 
 
 async def _analyze_batch(batch_size: int) -> tuple[int, int]:
-    pending = get_pending_opportunities("LIKELY_IT", batch_size)
+    pending = get_pending_opportunities(
+        "LIKELY_IT", batch_size, current_prompt_version=PROMPT_VERSION
+    )
     if not pending:
         return 0, 0
 

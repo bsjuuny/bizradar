@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { getOpportunity } from "@/lib/opportunities";
 import { formatCurrencyKRW, formatDateTime } from "@/lib/format";
 import { CategoryBadge } from "../category-badge";
+import { MatchScoreBadge } from "../match-score-badge";
 
 const PROJECT_TYPE_LABELS: Record<string, string> = {
   SYSTEM_BUILD: "시스템 구축",
@@ -34,7 +35,34 @@ export default async function OpportunityDetailPage({
       <div className="flex flex-wrap items-start gap-3">
         <h1 className="text-xl font-semibold text-balance">{opportunity.title}</h1>
         <CategoryBadge category={opportunity.category} />
+        <MatchScoreBadge score={opportunity.matchScore} />
       </div>
+
+      {opportunity.matchBreakdown && (
+        <section className="rounded-lg border border-border p-5">
+          <h2 className="text-sm font-semibold">Company Match</h2>
+          <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
+            {(
+              [
+                ["기술", opportunity.matchBreakdown.technology_score, 30],
+                ["사업 형태", opportunity.matchBreakdown.business_type_score, 20],
+                ["예산", opportunity.matchBreakdown.budget_score, 15],
+                ["경력", opportunity.matchBreakdown.experience_score, 15],
+                ["자격/인증", opportunity.matchBreakdown.qualification_score, 10],
+                ["지역", opportunity.matchBreakdown.region_score, 5],
+                ["일정", opportunity.matchBreakdown.schedule_score, 5],
+              ] as const
+            ).map(([label, score, max]) => (
+              <div key={label}>
+                <dt className="text-xs text-muted-foreground">{label}</dt>
+                <dd className="tabular-nums">
+                  {Math.round(score)} / {max}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      )}
 
       <dl className="grid grid-cols-1 gap-x-8 gap-y-3 rounded-lg border border-border p-5 text-sm sm:grid-cols-2">
         <div>

@@ -29,6 +29,8 @@ def upsert_success(
         "requirements": extraction.requirements,
         "risks": extraction.risks,
         "summary": extraction.summary,
+        "min_experience_years": extraction.min_experience_years,
+        "required_qualifications": extraction.required_qualifications,
         "model": model,
         "model_version": model_version,
         "prompt_version": prompt_version,
@@ -51,12 +53,17 @@ def upsert_failure(opportunity_id: str, content_hash: str, error_message: str) -
     client.table("project_analyses").upsert(row, on_conflict="opportunity_id").execute()
 
 
-def get_pending_opportunities(category: str, limit: int) -> list[dict[str, Any]]:
-    """Opportunities in `category` with no analysis yet, or whose existing analysis was
-    computed against an older content_hash (the source G2B data changed since) - see
-    docs/DATA_PIPELINE.md's idempotency section. Over-fetches candidates since some will
-    already be up to date, then filters in Python: PostgREST can't easily express
-    "column X != related row's column Y" as a single filter.
+def get_pending_opportunities(
+    category: str, limit: int, *, current_prompt_version: str
+) -> list[dict[str, Any]]:
+    """Opportunities in `category` with no analysis yet, whose existing analysis was
+    computed against an older content_hash (the source G2B data changed since), or whose
+    existing analysis used an older prompt_version (the extraction prompt/schema itself
+    changed - e.g. Phase 5 added min_experience_years/required_qualifications, which a
+    Phase-4-era analysis never asked for) - see docs/DATA_PIPELINE.md's idempotency
+    section. Over-fetches candidates since some will already be up to date, then filters
+    in Python: PostgREST can't easily express "column X != related row's column Y" as a
+    single filter.
     """
     client = get_service_client()
 
@@ -78,17 +85,22 @@ def get_pending_opportunities(category: str, limit: int) -> list[dict[str, Any]]
     existing = cast(
         "list[dict[str, Any]]",
         client.table("project_analyses")
-        .select("opportunity_id, analyzed_content_hash")
+        .select("opportunity_id, analyzed_content_hash, prompt_version")
         .in_("opportunity_id", ids)
         .execute()
         .data
         or [],
     )
-    analyzed_hash_by_opportunity = {
-        row["opportunity_id"]: row["analyzed_content_hash"] for row in existing
-    }
+    existing_by_opportunity = {row["opportunity_id"]: row for row in existing}
 
-    pending = [
-        c for c in candidates if analyzed_hash_by_opportunity.get(c["id"]) != c["content_hash"]
-    ]
+    def needs_analysis(candidate: dict[str, Any]) -> bool:
+        prior = existing_by_opportunity.get(candidate["id"])
+        if prior is None:
+            return True
+        return (
+            prior["analyzed_content_hash"] != candidate["content_hash"]
+            or prior["prompt_version"] != current_prompt_version
+        )
+
+    pending = [c for c in candidates if needs_analysis(c)]
     return pending[:limit]

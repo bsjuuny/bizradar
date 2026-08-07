@@ -3,11 +3,12 @@
 B2B SaaS MVP that helps IT/SI companies (5-50 employees) discover public-sector IT
 projects and government support programs, and track the public IT market.
 
-Status: **Phase 0-4 done** - repo/testing foundation, Supabase auth + company profile,
-the G2B collector, Project Radar (browse/search collected bid announcements), and Ollama-
-backed AI analysis (rule filter + structured extraction). See `docs/MVP_SCOPE.md` for the
-phase plan and `docs/VERIFICATION_REPORT.md` for what has actually been implemented and
-verified so far.
+Status: **Phase 0-5 done** - repo/testing foundation, Supabase auth + company profile,
+the G2B collector, Project Radar (browse/search collected bid announcements), Ollama-
+backed AI analysis (rule filter + structured extraction), and a rule-based Match Engine
+(Company Match settings + per-opportunity match score, no LLM). See `docs/MVP_SCOPE.md`
+for the phase plan and `docs/VERIFICATION_REPORT.md` for what has actually been
+implemented and verified so far.
 
 ## Structure
 
@@ -35,8 +36,9 @@ npm run dev
 
 Visit `/signup` or `/login`. New users are sent through `/onboarding` (company profile
 creation) before reaching `/dashboard`, from where **Project Radar** (`/opportunities`)
-lists and searches collected G2B bid announcements. Auth/RLS setup is documented in
-`docs/DATABASE.md` and `docs/ARCHITECTURE.md`.
+lists and searches collected G2B bid announcements, each showing a Company Match score
+once `/settings` (tech stack, budget range, experience, qualifications) is filled in.
+Auth/RLS setup is documented in `docs/DATABASE.md` and `docs/ARCHITECTURE.md`.
 
 **Worker - Windows**
 
@@ -57,10 +59,12 @@ pm2 start ecosystem.config.cjs
 ```
 
 This starts `g2b-collect` (hourly - see `docs/DATA_PIPELINE.md` for the G2B API's two
-non-obvious gotchas before touching `worker/collectors/g2b.py`) and `analyze` (every 10
-minutes, batches of 5). `analyze` needs a local Ollama running with `qwen3:8b` pulled
-(`ollama pull qwen3:8b`) - without it, that job logs a failure and skips itself each run,
-G2B collection is unaffected.
+non-obvious gotchas before touching `worker/collectors/g2b.py`), `analyze` (every 10
+minutes, batches of 5 - needs a local Ollama running with `qwen3:8b` pulled via
+`ollama pull qwen3:8b`, otherwise it logs a failure and skips itself each run, G2B
+collection is unaffected), and `match` (every 15 minutes, no external dependency -
+recomputes every company x analyzed-opportunity pair, see
+`docs/DATA_PIPELINE.md#match-engine-implemented-phase-5-rule-based-no-llm`).
 
 ## Verifying changes
 

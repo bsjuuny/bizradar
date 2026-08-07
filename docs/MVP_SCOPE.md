@@ -38,7 +38,8 @@ flag it instead of building it.
 | 9 | Error handling + security |
 | 10 | Full regression + Railway readiness |
 
-Current status: **Phase 0-4 done** - repo/testing foundation, Supabase auth + company
-profile, the G2B collector, Project UI, and Ollama-backed AI analysis (rule filter +
-structured extraction). See `docs/VERIFICATION_REPORT.md` for what has actually been run
-and passed vs. what is not yet implemented.
+Current status: **Phase 0-5 done** - repo/testing foundation, Supabase auth + company
+profile, the G2B collector, Project UI, Ollama-backed AI analysis, and the rule-based
+Match Engine (+ a Company Match Settings page to feed it real data). See
+`docs/VERIFICATION_REPORT.md` for what has actually been run and passed vs. what is not
+yet implemented.

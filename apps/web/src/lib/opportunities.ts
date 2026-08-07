@@ -15,6 +15,7 @@ export type OpportunitySummary = {
   budget_amount: number | null;
   posted_at: string | null;
   bid_close_at: string | null;
+  matchScore: number | null;
 };
 
 export type TechnologyMatch = {
@@ -33,6 +34,17 @@ export type ProjectAnalysis = {
   summary: string | null;
 };
 
+export type MatchScoreBreakdown = {
+  technology_score: number;
+  business_type_score: number;
+  budget_score: number;
+  experience_score: number;
+  qualification_score: number;
+  region_score: number;
+  schedule_score: number;
+  total_score: number;
+};
+
 export type OpportunityDetail = OpportunitySummary & {
   demand_organization: string | null;
   estimated_price: number | null;
@@ -40,6 +52,7 @@ export type OpportunityDetail = OpportunitySummary & {
   open_at: string | null;
   source_url: string | null;
   analysis: ProjectAnalysis | null;
+  matchBreakdown: MatchScoreBreakdown | null;
 };
 
 export type OpportunityPage = {
@@ -51,6 +64,22 @@ export type OpportunityPage = {
 
 function escapeLikeTerm(term: string): string {
   return term.replace(/[%_]/g, "\\$&");
+}
+
+// match_scores is company-scoped by RLS (see supabase/migrations - policy compares
+// against auth_company_id()), so this never needs to filter by company explicitly -
+// a user simply can't see another company's rows regardless of the query.
+async function getMatchTotals(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  opportunityIds: string[],
+): Promise<Map<string, number>> {
+  if (opportunityIds.length === 0) return new Map();
+  const { data, error } = await supabase
+    .from("match_scores")
+    .select("opportunity_id, total_score")
+    .in("opportunity_id", opportunityIds);
+  if (error) throw new Error(`Failed to load match scores: ${error.message}`);
+  return new Map((data ?? []).map((row) => [row.opportunity_id, row.total_score]));
 }
 
 export async function getOpportunities({
@@ -90,7 +119,18 @@ export async function getOpportunities({
   const { data, error, count } = await query;
   if (error) throw new Error(`Failed to load opportunities: ${error.message}`);
 
-  return { items: data ?? [], total: count ?? 0, page: safePage, pageSize: PAGE_SIZE };
+  const items = data ?? [];
+  const matchTotals = await getMatchTotals(
+    supabase,
+    items.map((item) => item.id),
+  );
+
+  return {
+    items: items.map((item) => ({ ...item, matchScore: matchTotals.get(item.id) ?? null })),
+    total: count ?? 0,
+    page: safePage,
+    pageSize: PAGE_SIZE,
+  };
 }
 
 export async function getOpportunity(id: string): Promise<OpportunityDetail | null> {
@@ -112,10 +152,24 @@ export async function getOpportunity(id: string): Promise<OpportunityDetail | nu
 
   // project_analyses has a unique(opportunity_id) constraint, so this is a true 1:1
   // relationship, but PostgREST's embed still types it as an array in the generic case.
-  const raw = data as unknown as Omit<OpportunityDetail, "analysis"> & {
+  const raw = data as unknown as Omit<OpportunityDetail, "analysis" | "matchScore" | "matchBreakdown"> & {
     analysis: ProjectAnalysis[] | ProjectAnalysis | null;
   };
   const analysis = Array.isArray(raw.analysis) ? (raw.analysis[0] ?? null) : raw.analysis;
 
-  return { ...raw, analysis };
+  const { data: matchRow, error: matchError } = await supabase
+    .from("match_scores")
+    .select(
+      "technology_score, business_type_score, budget_score, experience_score, qualification_score, region_score, schedule_score, total_score",
+    )
+    .eq("opportunity_id", id)
+    .maybeSingle();
+  if (matchError) throw new Error(`Failed to load match score: ${matchError.message}`);
+
+  return {
+    ...raw,
+    analysis,
+    matchScore: matchRow?.total_score ?? null,
+    matchBreakdown: matchRow ?? null,
+  };
 }

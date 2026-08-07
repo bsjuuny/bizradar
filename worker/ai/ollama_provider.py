@@ -25,11 +25,17 @@ from worker.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
-PROMPT_VERSION = "v1"
+PROMPT_VERSION = "v4"  # v3 bounded array lengths; v4 dedupes list fields (schemas.py)
 # A single call was observed at ~61s on CPU; leave generous headroom rather than
 # guessing at a "safe" lower number that might flake on a slower run.
 REQUEST_TIMEOUT_SECONDS = 300.0
 
+# Every array field has maxItems. Without it, a live run produced a genuine repetition
+# loop: required_qualifications came back with the same certification name duplicated
+# ~15 times before the string got cut off mid-word - schema-valid (list[str] has no
+# length constraint) but useless, and the next real item then timed out at 300s, almost
+# certainly the same failure mode costing enough extra generation time to blow the
+# budget. Bounding array length is a direct mitigation, not a guess.
 _PROJECT_EXTRACTION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -47,6 +53,7 @@ _PROJECT_EXTRACTION_SCHEMA: dict[str, Any] = {
         },
         "technologies": {
             "type": "array",
+            "maxItems": 10,
             "items": {
                 "type": "object",
                 "properties": {
@@ -57,10 +64,12 @@ _PROJECT_EXTRACTION_SCHEMA: dict[str, Any] = {
                 "required": ["name", "confidence", "evidence"],
             },
         },
-        "required_roles": {"type": "array", "items": {"type": "string"}},
-        "requirements": {"type": "array", "items": {"type": "string"}},
-        "risks": {"type": "array", "items": {"type": "string"}},
+        "required_roles": {"type": "array", "maxItems": 8, "items": {"type": "string"}},
+        "requirements": {"type": "array", "maxItems": 8, "items": {"type": "string"}},
+        "risks": {"type": "array", "maxItems": 8, "items": {"type": "string"}},
         "summary": {"type": "string"},
+        "min_experience_years": {"type": ["integer", "null"]},
+        "required_qualifications": {"type": "array", "maxItems": 8, "items": {"type": "string"}},
     },
     "required": ["project_type", "summary"],
 }
@@ -146,7 +155,12 @@ class OllamaProvider(AIProvider):
     async def extract_project(self, text: str) -> ProjectExtraction:
         prompt = (
             "다음 공공 입찰공고를 분석해서 JSON으로 답하라. "
-            "기술 스택은 공고 내용에 명시적으로 언급되거나 강하게 암시된 것만 포함하라.\n\n"
+            "기술 스택은 공고 내용에 명시적으로 언급되거나 강하게 암시된 것만 포함하라. "
+            "요구 경력(예: '유사사업 수행실적 3년 이상')이 명시되어 있으면 "
+            "min_experience_years에 숫자만 넣고, 없으면 null로 두라. "
+            "요구 자격/인증(예: 'SW사업자 등록', '정보보호관리체계 인증')이 있으면 "
+            "required_qualifications에 나열하고, 없으면 빈 배열로 두라. "
+            "모든 배열 항목은 서로 중복되지 않아야 하며 각 배열은 최대 5개까지만 포함하라.\n\n"
             f"{text}"
         )
         return self._extract_with_repair(prompt)

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { type Category, getOpportunities } from "@/lib/opportunities";
 import { formatCurrencyKRW, formatDate } from "@/lib/format";
 import { CategoryBadge } from "./category-badge";
+import { MatchScoreBadge } from "./match-score-badge";
 
 const CATEGORY_TABS: { value: Category | ""; label: string }[] = [
   { value: "", label: "전체" },
@@ -109,11 +110,12 @@ export default async function OpportunitiesPage({
       ) : (
         <>
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[820px] text-sm">
+            <table className="w-full min-w-[920px] text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/40 text-left text-muted-foreground">
                   <th className="px-4 py-2.5 font-medium">공고명</th>
                   <th className="px-4 py-2.5 font-medium">분류</th>
+                  <th className="px-4 py-2.5 font-medium">매칭</th>
                   <th className="px-4 py-2.5 font-medium">발주기관</th>
                   <th className="px-4 py-2.5 text-right font-medium">배정예산</th>
                   <th className="px-4 py-2.5 font-medium">게시일</th>
@@ -129,6 +131,9 @@ export default async function OpportunitiesPage({
                     </td>
                     <td className="px-4 py-3">
                       <CategoryBadge category={item.category} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <MatchScoreBadge score={item.matchScore} />
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-muted-foreground">
                       {item.organization ?? "—"}

@@ -62,7 +62,7 @@ def test_build_prompt_text_includes_available_fields():
 
 
 def test_run_no_pending_opportunities_logs_zero_and_does_not_error(monkeypatch, caplog):
-    monkeypatch.setattr(analyze_job, "get_pending_opportunities", lambda category, limit: [])
+    monkeypatch.setattr(analyze_job, "get_pending_opportunities", lambda category, limit, **kw: [])
     monkeypatch.setattr(analyze_job, "upsert_success", lambda *a, **kw: pytest.fail("unexpected"))
     monkeypatch.setattr(analyze_job, "upsert_failure", lambda *a, **kw: pytest.fail("unexpected"))
 
@@ -77,7 +77,7 @@ def test_run_no_pending_opportunities_logs_zero_and_does_not_error(monkeypatch, 
 
 def test_run_persists_success_for_each_opportunity(monkeypatch, caplog):
     monkeypatch.setattr(
-        analyze_job, "get_pending_opportunities", lambda category, limit: [OPP_A, OPP_B]
+        analyze_job, "get_pending_opportunities", lambda category, limit, **kw: [OPP_A, OPP_B]
     )
     monkeypatch.setattr(
         analyze_job,
@@ -101,7 +101,7 @@ def test_run_persists_success_for_each_opportunity(monkeypatch, caplog):
 
 def test_run_isolates_per_item_failure(monkeypatch, caplog):
     monkeypatch.setattr(
-        analyze_job, "get_pending_opportunities", lambda category, limit: [OPP_A, OPP_B]
+        analyze_job, "get_pending_opportunities", lambda category, limit, **kw: [OPP_A, OPP_B]
     )
     monkeypatch.setattr(
         analyze_job,
@@ -134,7 +134,9 @@ def test_run_isolates_per_item_failure(monkeypatch, caplog):
 
 
 def test_run_does_not_raise_when_provider_setup_fails(monkeypatch, caplog):
-    monkeypatch.setattr(analyze_job, "get_pending_opportunities", lambda category, limit: [OPP_A])
+    monkeypatch.setattr(
+        analyze_job, "get_pending_opportunities", lambda category, limit, **kw: [OPP_A]
+    )
 
     def boom():
         raise RuntimeError("Ollama is not reachable")

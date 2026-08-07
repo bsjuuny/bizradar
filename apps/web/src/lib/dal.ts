@@ -29,8 +29,16 @@ export type CompanyMembership = {
     region: string | null;
     business_type: string | null;
     founded_year: number | null;
+    budget_min: number | null;
+    budget_max: number | null;
+    experience_years: number;
+    qualifications: string[];
   };
 };
+
+const COMPANY_COLUMNS =
+  "id, name, size_band, industry, region, business_type, founded_year, " +
+  "budget_min, budget_max, experience_years, qualifications";
 
 export const getCompany = cache(async (): Promise<CompanyMembership | null> => {
   const user = await getUser();
@@ -39,9 +47,7 @@ export const getCompany = cache(async (): Promise<CompanyMembership | null> => {
   const supabase = await createClient();
   const { data, error } = await supabase
     .from("company_members")
-    .select(
-      "company_id, role, company:companies(id, name, size_band, industry, region, business_type, founded_year)",
-    )
+    .select(`company_id, role, company:companies(${COMPANY_COLUMNS})`)
     .eq("user_id", user.id)
     .maybeSingle();
 

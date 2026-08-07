@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 const LINKS = [
   { href: "/dashboard", label: "대시보드" },
   { href: "/opportunities", label: "Project Radar" },
+  { href: "/settings", label: "설정" },
 ];
 
 export function NavLinks() {

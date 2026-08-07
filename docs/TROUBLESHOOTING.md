@@ -175,3 +175,28 @@ embedded field as an array. Normalize it yourself:
 
 Run `pip install -e ".[dev]"` from the repo root (not from `worker/`) - the package is
 defined by the root `pyproject.toml` with `packages.find.include = ["worker*"]`.
+
+## `TypeError: unsupported operand type(s) for -: 'str' and 'datetime.datetime'` in the Match Engine
+
+Seen live running `worker/jobs/match_job.py` against a real opportunity with a non-null
+`bid_close_at` (offline unit tests never hit this, since they construct
+`OpportunityRequirements` directly with real `datetime` objects). PostgREST returns
+`timestamptz` columns as plain JSON strings - `supabase-py` does not auto-parse them.
+Fixed with an explicit `datetime.fromisoformat()` parse in
+`worker/repositories/match_scores.py` before constructing `OpportunityRequirements`. Apply
+the same parse to any other `timestamptz` column read out of a PostgREST response and
+passed into code that expects a real `datetime`.
+
+## Ollama extraction repeats the same array item ~15 times, then times out
+
+Seen live during Phase 4/5 schema work: `required_qualifications` (and similar array
+fields) came back with the same value repeated many times before truncating mid-string,
+and the next field then blew the 300s timeout - a token-budget-destroying repetition
+loop, not a one-off fluke. Fixed by adding `maxItems` to every array field in the Ollama
+JSON schema (`worker/ai/ollama_provider.py`) plus an explicit "no duplicates, max 5 items"
+instruction in the prompt, and - since a live re-run still showed some in-content
+duplication within the now-bounded array - an order-preserving dedupe
+`field_validator` on `ProjectExtraction` (`worker/ai/schemas.py`). Bump
+`PROMPT_VERSION` whenever the schema or prompt text changes, so already-analyzed rows are
+picked up for re-analysis (`worker/repositories/project_analyses.py:get_pending_opportunities()`
+compares both `content_hash` and `prompt_version`).

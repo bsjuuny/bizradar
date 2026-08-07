@@ -89,5 +89,25 @@ mypy worker
   shows the badge; detail page renders a seeded `SUCCESS` analysis (technology chip,
   roles, summary) correctly.
 
-Nothing beyond this has a test yet - there is no match engine, support program,
-saved/watch feature, or further UI page to test until their respective phases land.
+- `worker/tests/test_match_engine.py` - 20 tests: all 7 scoring categories individually,
+  named scenarios (완전 일치/기술 일부 일치/예산 범위 초과/지역 불일치/경험 없음/조건
+  부족), and exact boundary totals (49/50/64/65/79/80/100).
+- `worker/tests/test_match_scores_repository.py` - `_parse_datetime()` against the exact
+  `bid_close_at` string PostgREST returns (regression test for the live-found
+  `str`/`datetime` bug - see `docs/DATABASE.md`'s Phase 5 gotchas).
+- `worker/tests/test_match_job.py` - 3 tests: computes scores for every company/analyzed-
+  opportunity pair, upserts (not duplicate-inserts) on re-run, total failure is caught and
+  logged rather than raised.
+- `apps/web/e2e/settings.spec.ts` - 2 tests: saving the Company Match settings form
+  persists and survives reload; an invalid budget range (`min > max`) is rejected with an
+  inline error, not silently saved.
+- `apps/web/e2e/opportunities.spec.ts` (extended) - the "detail page shows AI analysis"
+  test now also seeds a `match_scores` row and asserts the total ("매칭 85점") renders on
+  both the detail page and the list page, and that a deliberately-zeroed category
+  ("0 / 15") renders correctly in the breakdown.
+- Live (not part of `pytest` - see `docs/VERIFICATION_REPORT.md`): ran `match_job.run()`
+  against a temporary real company profile + real analyzed opportunities, confirmed
+  computed scores matched hand-calculated expectations.
+
+Nothing beyond this has a test yet - there is no support program, saved/watch feature, or
+further UI page to test until their respective phases land.

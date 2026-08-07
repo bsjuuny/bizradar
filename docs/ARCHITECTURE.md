@@ -45,13 +45,16 @@ explainable and reproducible, and keeps Ollama off the hot path for every dashbo
 
 ## Status
 
-Phase 0-4 done: auth + company profile, the G2B collector, Project Radar UI, and AI
-analysis (`worker/ai/rule_filter.py` + `worker/ai/ollama_provider.py`) are implemented
+Phase 0-5 done: auth + company profile, the G2B collector, Project Radar UI, AI analysis,
+and the Match Engine (`worker/matching/engine.py`, no LLM - rule-based) are implemented
 and verified against the real linked project, the real G2B API, a real local Ollama
-instance, and a real browser (Playwright). Match engine, BizInfo/K-Startup collectors,
-and everything past them are per `docs/MVP_SCOPE.md`'s phase plan.
+instance, and a real browser (Playwright). BizInfo/K-Startup collectors and everything
+past them are per `docs/MVP_SCOPE.md`'s phase plan.
 
 `OllamaProvider` is the first concrete `AIProvider` - it's the architecture's proof point
 that Railway never touches Ollama: the worker calls `http://127.0.0.1:11434` directly
 from the local PC, analyzes, and writes results to Supabase; the web app only ever reads
-`project_analyses`, never calls the model itself.
+`project_analyses`/`match_scores`, never calls the model itself. The Match Engine keeps
+that boundary too, in the other direction: it's deliberately rule-based so a company's
+match percentage is deterministic and explainable, not another LLM call in the hot path
+of every dashboard read.
