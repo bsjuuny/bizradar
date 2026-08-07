@@ -45,9 +45,9 @@ explainable and reproducible, and keeps Ollama off the hot path for every dashbo
 
 ## Status
 
-Phase 0 + 1 + 2: auth + company profile (Supabase Auth, `proxy.ts` optimistic redirects,
-RLS-backed data access) and the G2B collector (`worker/collectors/g2b.py`, hourly job in
-`worker/scheduler/main.py`) are implemented and verified against the real linked project
-and the real G2B API - see `docs/VERIFICATION_REPORT.md`. `AIProvider` is still interface
--only (no concrete provider - Phase 4); match engine, BizInfo/K-Startup collectors, and
-everything past them are per `docs/MVP_SCOPE.md`'s phase plan.
+Phase 0-3 done: auth + company profile, the G2B collector, and Project Radar (the
+`opportunities` list/detail UI at `/opportunities`, under the shared `(app)` route group
+- see `docs/DATA_PIPELINE.md`) are implemented and verified against the real linked
+project, the real G2B API, and a real browser (Playwright). `AIProvider` is still
+interface-only (no concrete provider - Phase 4); match engine, BizInfo/K-Startup
+collectors, and everything past them are per `docs/MVP_SCOPE.md`'s phase plan.

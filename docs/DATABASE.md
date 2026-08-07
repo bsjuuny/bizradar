@@ -1,7 +1,7 @@
 # Database
 
-## Status: Phase 1 (company profile) + Phase 2 (opportunities) tables implemented and
-verified against the live project; the rest are NOT_IMPLEMENTED until their phase.
+## Status: Phase 1-3 tables implemented and verified against the live project; the rest
+are NOT_IMPLEMENTED until their phase.
 
 - `20260807120000_phase1_company_profile.sql` + `20260807130000_phase1_grants.sql`:
   `technologies`, `companies`, `company_members`, `company_technologies`,
@@ -9,6 +9,9 @@ verified against the live project; the rest are NOT_IMPLEMENTED until their phas
   `supabase/tests/test_rls_phase1.py`.
 - `20260807140000_phase2_opportunities.sql`: `opportunities`. Verified live via
   `worker/collectors/g2b.py` against the real G2B API + this project.
+- `20260807150000_phase3_opportunities_search.sql` +
+  `20260807160000_phase3_search_trgm.sql`: search over `opportunities`. Verified via
+  `apps/web/e2e/opportunities.spec.ts` against the real project.
 
 See `docs/VERIFICATION_REPORT.md` for what was actually run.
 
@@ -38,7 +41,9 @@ Implemented (Phase 1):
   `posted_at`/`bid_close_at`/`open_at`, `source_url`, plus `raw_payload` (full API item)
   and `content_hash`. Unique on `(source, external_id)` - see
   `docs/DATA_PIPELINE.md#idempotency`. RLS: any authenticated user can `select`; only
-  `service_role` writes.
+  `service_role` writes. Also has `search_vector` (generated `tsvector`, GIN-indexed)
+  plus `gin_trgm_ops` trigram indexes on `title`/`organization` for substring search -
+  see the Phase 3 gotcha below for why both exist.
 
 Planned (later phases, see `docs/MVP_SCOPE.md`):
 
@@ -72,6 +77,19 @@ Planned (later phases, see `docs/MVP_SCOPE.md`):
   and writing it to a UTF-8 file showed it was correct all along. Lesson: don't trust an
   ad-hoc shell-pipe verification's *encoding* on Windows - verify through the same
   HTTP/JSON stack the application actually uses.
+
+## Gotchas hit while implementing Phase 3 (see `docs/TROUBLESHOOTING.md` for full detail)
+
+- `to_tsvector('simple', ...)` (Postgres has no Korean dictionary) only matches whole
+  tokens - searching "교육" against a title containing the compound token "교육여행"
+  returns nothing, because there's no stemming to split it. Verified live before writing
+  any app code. Added `pg_trgm` + GIN trigram indexes for real substring search via
+  `ilike`, which is what the UI actually uses; kept the `tsvector`/GIN column too
+  (exact-token search, e.g. by organization name, still has value and does no harm).
+- Deleting a route (`app/dashboard/page.tsx` moved under a route group) left a stale
+  reference in `.next/types/`, which made `tsc --noEmit` fail on a file that no longer
+  existed. Deleting `.next/` and re-running `next build` (which regenerates route types)
+  fixed it - this is generated output, never a real code problem.
 
 ## RLS (must pass before Phase 1 is considered done)
 

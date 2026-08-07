@@ -1,8 +1,22 @@
 # Data Pipeline
 
-## Status: G2B collector implemented and live-verified (Phase 2). BizInfo/K-Startup
-land in Phase 6; AI analysis and match scoring in Phase 4/5 - see below for what's
-actually built vs. still just interface/design.
+## Status: G2B collector (Phase 2) and its Project UI (Phase 3) implemented and
+live-verified. BizInfo/K-Startup land in Phase 6; AI analysis and match scoring in
+Phase 4/5 - see below for what's actually built vs. still just interface/design.
+
+## Project UI (implemented, Phase 3)
+
+`apps/web/src/app/(app)/opportunities/` reads `opportunities` directly (RLS: any
+authenticated user can `select`) - no API route needed, Server Components query Supabase
+straight from `apps/web/src/lib/opportunities.ts`. List page: paginated (20/page),
+substring search over title/organization (`pg_trgm` + `ilike` - see
+`docs/DATABASE.md`'s Phase 3 gotchas for why not plain full text search), empty/loading/
+error states via Next's `loading.tsx`/`error.tsx`/`not-found.tsx` file conventions.
+Detail page: full field breakdown + link back to the 나라장터 원문.
+
+No rule-filter/AI category exists yet (see below), so the list shows every collected
+용역 announcement as-is - including non-IT ones (school field trips, etc.). That's
+expected at this phase, not a bug: filtering for IT-relevance is Phase 4 work.
 
 ## Collector interface
 

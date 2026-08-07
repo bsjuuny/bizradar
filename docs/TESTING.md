@@ -11,10 +11,10 @@ npm run build        # next build - must succeed
 npm run test:e2e    # Playwright - core user flow, against the real linked Supabase project
 ```
 
-Playwright (`apps/web/e2e/`) is reserved for the core user flow smoke test (login ->
-onboarding -> dashboard -> logout, plus the signup call) - not a large E2E suite. It runs
-against the real linked Supabase project (no local/mocked backend), creates its own
-throw-away auth users via the Admin API, and cleans them up in `afterAll` even on
+Playwright (`apps/web/e2e/`) is reserved for core user flow smoke tests (auth, and Project
+Radar) - not a large E2E suite. Both spec files run against the real linked Supabase
+project (no local/mocked backend), create their own throw-away auth users via the Admin
+API (shared setup/cleanup helpers in `e2e/helpers.ts`), and clean up in `afterAll` even on
 failure. Requires `.env.worker` and `apps/web/.env.local` to be filled in.
 
 ## Worker (repo root, venv active)
@@ -36,7 +36,7 @@ mypy worker
 - A bug fix always gets a regression test that reproduces the bug first, then the fix,
   then the same test passing, then the surrounding module's tests, then the full suite.
 
-## What's actually covered right now (Phase 0 + Phase 1 + Phase 2)
+## What's actually covered right now (Phase 0 through Phase 3)
 
 - `worker/tests/test_config.py` - `Settings` defaults (`data_mode=mock`, local Ollama
   URL/model, no Supabase creds required to import).
@@ -63,6 +63,14 @@ mypy worker
 - Live (not part of `pytest` - see `docs/VERIFICATION_REPORT.md`): ran
   `G2BCollector` against the real API + real Supabase project, twice, to confirm
   idempotent upsert (same row count, only `updated_at` moves) with correct Korean text.
+
+- `apps/web/src/lib/format.test.ts` - currency/date formatting, including null/invalid
+  input handling.
+- `apps/web/e2e/opportunities.spec.ts` - unauthenticated `/opportunities` redirects to
+  `/login`; list renders real collected data and detail navigation works; search with no
+  matches shows the empty state; a nonexistent id renders the not-found page. Runs
+  against whatever is actually in `opportunities` right now - no fixture/seed data of its
+  own, since the point is to exercise the UI against real collector output.
 
 Nothing beyond this has a test yet - there is no AI provider, match engine, support
 program, saved/watch feature, or further UI page to test until their respective phases

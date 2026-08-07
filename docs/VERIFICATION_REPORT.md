@@ -292,3 +292,94 @@ No test was weakened or skipped to reach green.
 | Tests (Phase 0+1+2 scope) | PASS (web unit: 1/1, worker: 23/23, RLS: 12/12, e2e: 2/2) |
 | Railway Ready | PARTIAL (`/api/health` exists and builds; env-var-driven; never deployed to Railway) |
 | PM2 Worker Ready | PASS (`g2b-collect` job registered and boot-verified this phase) |
+
+---
+
+# Phase 3: Project UI
+
+## Commands / runs actually executed
+
+| Step | Result |
+|---|---|
+| Live SQL probe: `plainto_tsquery('simple', '교육')` against real titles | FAIL (0 results) - `simple` config doesn't stem, found via direct SQL before writing app code |
+| Live SQL probe: `title like '%교육%'` (substring) against the same data | PASS (1 result) - confirmed the fix approach before implementing it |
+| `npx supabase db push --dry-run` / `db lint` / `db push` (search_vector migration) | PASS |
+| `npx supabase db push --dry-run` / `db lint` / `db push` (pg_trgm migration) | PASS |
+| Live REST probe: `title=ilike.*교육*` via `httpx` | PASS (200, 1 match) |
+| `npm run lint` / `typecheck` / `test:run` / `build` (apps/web) | PASS (after 2 fixes, see below) |
+| `npm run test:e2e` (8 tests total: 4 existing + 4 new in `opportunities.spec.ts`) | PASS - 8/8, first new-suite run had 1 failure (curly-quote assertion), fixed and re-verified green |
+
+## Errors encountered and fixed this phase
+
+1. Full text search returned nothing for a term visibly present in the data
+   (`교육` vs. title containing `교육여행`). Root-caused via direct SQL before touching
+   any application code: `'simple'` text search config doesn't stem/split compound
+   Korean tokens. Fixed by adding `pg_trgm` + GIN trigram indexes and switching the
+   app's search query to `ilike`, verified live via the REST API before wiring it into
+   the DAL.
+2. `curl -G --data-urlencode` with a Korean wildcard pattern returned HTTP 500
+   "Something went wrong"; the identical query via `httpx` in Python returned a normal
+   200. Not root-caused further (not worth the time - see `docs/TROUBLESHOOTING.md`),
+   but recorded so a future `curl`-based check that "fails" isn't assumed to indicate a
+   real backend problem without a second opinion from a different HTTP client.
+3. Deleting `apps/web/src/app/dashboard/` (moved to the `(app)` route group) broke
+   `tsc --noEmit` with "cannot find module .../dashboard/page.js" - a stale reference in
+   `.next/types/`. Deleted `.next/` and re-ran `next build` to regenerate it.
+4. First `opportunities.spec.ts` run: the empty-search-state assertion used straight
+   quotes (`"..."`) but the page renders `&ldquo;`/`&rdquo;` (curly “ ”). Read the actual
+   rendered text from the Playwright failure's yaml snapshot rather than guessing, fixed
+   the assertion, re-ran green.
+
+No test was weakened to reach green; #1 changed the actual schema/query (a real
+correctness fix, found via live SQL investigation before any app code existed), and #4
+fixed the test's own bug, not the page under test.
+
+## What Phase 3 built
+
+- **Schema**: `opportunities.search_vector` (generated `tsvector`, GIN) +
+  `pg_trgm`/GIN-trgm indexes on `title`/`organization`.
+- **Data access**: `apps/web/src/lib/opportunities.ts` - `getOpportunities` (paginated,
+  20/page, optional `ilike` search over title+organization with `%`/`_` escaping),
+  `getOpportunity` (by id).
+- **UI**: shared `(app)` route group (`layout.tsx` with nav, `nav-links.tsx` for
+  active-state highlighting), `/dashboard` moved under it unchanged, new `/opportunities`
+  (list: search form, table, pagination, empty state) and `/opportunities/[id]` (detail,
+  `not-found.tsx` for a bad id), `loading.tsx`/`error.tsx` for both routes.
+- **Tests**: `apps/web/src/lib/format.test.ts` (currency/date formatting, 8 cases),
+  `apps/web/e2e/opportunities.spec.ts` (4 tests: unauthenticated redirect, list+detail
+  navigation against real data, empty search state, not-found page) - refactored the
+  shared admin-user create/cleanup logic out of `core-flow.spec.ts` into
+  `e2e/helpers.ts` so both spec files use the same, once-verified setup/teardown.
+
+## Known limitations
+
+- The list shows every collected 용역 announcement, IT-relevant or not - no rule filter
+  exists yet (Phase 4-adjacent, deliberately not built ahead of the AI stage that needs
+  it - see `docs/DATA_PIPELINE.md`).
+- Search is substring-only (`pg_trgm`/`ilike`), not ranked/relevance-scored full text
+  search - a reasonable MVP tradeoff for un-stemmable Korean text, not a shortcut taken
+  to skip work (the FTS path was built first and found lacking via live testing).
+- No sort/filter controls beyond the search box (e.g. by budget, region, deadline) -
+  not in this phase's scope.
+
+## Completion status table (supersedes the Phase 2 table above for changed rows)
+
+| Component | Status |
+|---|---|
+| Web Build | PASS |
+| Authentication | PASS (login/logout real, e2e-tested; signup's happy path NOT TESTED - needs real email click-through) |
+| Company Profile | PASS (creation, RLS-scoped read, e2e-tested) |
+| G2B Collector | PASS (live-verified against the real API + real DB, idempotent re-run confirmed, 11/11 unit tests) |
+| Project Normalization | PASS (G2B RAW->NORMALIZED; BizInfo/K-Startup normalization NOT_IMPLEMENTED - Phase 6) |
+| Project UI | PASS (list/search/pagination/detail/empty/error/not-found, e2e-tested against real collected data) |
+| AI Analysis | NOT TESTED (not implemented - Phase 4; Ollama also not installed locally) |
+| Match Engine | NOT TESTED (not implemented - Phase 5) |
+| Support Collector | NOT TESTED (not implemented - Phase 6) |
+| Support Matching | NOT TESTED (not implemented - Phase 6) |
+| Market Aggregation | NOT TESTED (not implemented - Phase 7) |
+| Saved | NOT TESTED (not implemented - Phase 8) |
+| Watch | NOT TESTED (not implemented - Phase 8) |
+| RLS | PASS (12/12 Phase 1 checks + opportunities read/write policy live-exercised) |
+| Tests (Phase 0-3 scope) | PASS (web unit: 8/8, worker: 23/23, RLS: 12/12, e2e: 8/8) |
+| Railway Ready | PARTIAL (`/api/health` exists and builds; env-var-driven; never deployed to Railway) |
+| PM2 Worker Ready | PASS (unchanged this phase) |

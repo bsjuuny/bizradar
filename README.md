@@ -3,9 +3,10 @@
 B2B SaaS MVP that helps IT/SI companies (5-50 employees) discover public-sector IT
 projects and government support programs, and track the public IT market.
 
-Status: **Phase 0 (repo/testing foundation), Phase 1 (Supabase auth + company profile),
-and Phase 2 (G2B collector) done.** See `docs/MVP_SCOPE.md` for the phase plan and
-`docs/VERIFICATION_REPORT.md` for what has actually been implemented and verified so far.
+Status: **Phase 0-3 done** - repo/testing foundation, Supabase auth + company profile,
+the G2B collector, and Project Radar (browse/search collected bid announcements). See
+`docs/MVP_SCOPE.md` for the phase plan and `docs/VERIFICATION_REPORT.md` for what has
+actually been implemented and verified so far.
 
 ## Structure
 
@@ -32,7 +33,8 @@ npm run dev
 ```
 
 Visit `/signup` or `/login`. New users are sent through `/onboarding` (company profile
-creation) before reaching `/dashboard`. Auth/RLS setup is documented in
+creation) before reaching `/dashboard`, from where **Project Radar** (`/opportunities`)
+lists and searches collected G2B bid announcements. Auth/RLS setup is documented in
 `docs/DATABASE.md` and `docs/ARCHITECTURE.md`.
 
 **Worker - Windows**

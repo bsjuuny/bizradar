@@ -39,5 +39,5 @@ flag it instead of building it.
 | 10 | Full regression + Railway readiness |
 
 Current status: **Phase 0 done, Phase 1 (auth + company profile) done, Phase 2 (G2B
-collector) done.** See `docs/VERIFICATION_REPORT.md` for what has actually been run and
-passed vs. what is not yet implemented.
+collector) done, Phase 3 (Project UI) done.** See `docs/VERIFICATION_REPORT.md` for what
+has actually been run and passed vs. what is not yet implemented.

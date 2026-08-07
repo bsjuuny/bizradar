@@ -123,6 +123,41 @@ default codepage, not UTF-8, and mangles multi-byte Korean text. Verify with `ht
 Python instead (same stack the app actually uses), or write the piped output to a file
 and read it back with `encoding="utf-8"` explicitly.
 
+## `tsc --noEmit` fails on a deleted route file that no longer exists
+
+Seen after moving `app/dashboard/page.tsx` into a route group
+(`app/(app)/dashboard/page.tsx`): `.next/types/validator.ts` still referenced the old
+path. `.next/` is generated output cached from the last `next dev`/`next build` - delete
+it and re-run `next build` (which regenerates route types) rather than treating it as a
+real code problem.
+
+## A Playwright text assertion doesn't match text that's visibly correct on screen
+
+Check for curly vs. straight quotes. `&ldquo;`/`&rdquo;` in JSX render as “ ” (U+201C/
+U+201D), not `"`/`"` - a `page.getByText('"...">')` assertion using straight quotes will
+never match. Read the actual rendered text from the failure's `Error Context` yaml
+snapshot rather than guessing from the source.
+
+## Postgres full text search finds nothing for a term that's clearly in the data
+
+If the text is Korean (or any language Postgres has no dictionary for), check which
+config you used. `to_tsvector('simple', ...)` does no stemming - it only matches whole
+tokens, so it won't find "교육" inside a compound token like "교육여행" the way substring
+search would. Verify by testing the exact query directly in SQL
+(`select ... where search_vector @@ plainto_tsquery('simple', '...')`) before assuming
+the app code is wrong. For substring matching, `pg_trgm` + `ilike` is the practical fix -
+see `docs/DATABASE.md`'s Phase 3 gotchas.
+
+## `curl` with Korean characters in a query param returns "Something went wrong" (HTTP 500)
+
+Seen testing `ilike.*교육*` against the Supabase REST API via `curl -G --data-urlencode`
+on Windows. Root cause not fully isolated (Windows `curl.exe` argument encoding is a
+likely suspect) - not worth chasing further, since the same query via `httpx` in Python
+returns a normal 200 with correct results. When a `curl`-based check fails in a way that
+doesn't make sense, retry with `httpx`/`fetch` before concluding the backend is broken -
+this is now the second time a `curl`-on-Windows artifact looked like a real bug (see the
+Korean-mojibake entry below) and wasn't.
+
 ## Worker can't find `worker` package
 
 Run `pip install -e ".[dev]"` from the repo root (not from `worker/`) - the package is

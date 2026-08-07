@@ -1,19 +1,12 @@
-import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { config as loadEnv } from "dotenv";
 import { expect, test } from "@playwright/test";
+import { SERVICE_ROLE_KEY, SUPABASE_URL, cleanupUser, createConfirmedUser } from "./helpers";
 
 // Email confirmation is on for this Supabase project (see docs/VERIFICATION_REPORT.md),
 // so signup can't be driven end-to-end without a real inbox. This test pre-creates and
 // confirms a throw-away user via the Admin API (same approach as
 // supabase/tests/test_rls_phase1.py) and drives everything from login onward through a
 // real browser against the real linked project.
-loadEnv({ path: path.resolve(__dirname, "../../../.env.worker") });
-loadEnv({ path: path.resolve(__dirname, "../.env.local") });
-
-const SUPABASE_URL = process.env.SUPABASE_URL!;
-const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
 let userId: string;
 let email: string;
 let password: string;
@@ -21,32 +14,11 @@ let password: string;
 test.beforeAll(async ({ request }) => {
   email = `bizradar-e2e-${randomUUID().slice(0, 8)}@example.com`;
   password = `Test-${randomUUID()}!A1`;
-
-  const resp = await request.post(`${SUPABASE_URL}/auth/v1/admin/users`, {
-    headers: { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` },
-    data: { email, password, email_confirm: true },
-  });
-  expect(resp.ok()).toBeTruthy();
-  userId = (await resp.json()).id;
+  userId = await createConfirmedUser(request, email, password);
 });
 
 test.afterAll(async ({ request }) => {
-  if (!userId) return;
-  const headers = { apikey: SERVICE_ROLE_KEY, Authorization: `Bearer ${SERVICE_ROLE_KEY}` };
-
-  const membersResp = await request.get(
-    `${SUPABASE_URL}/rest/v1/company_members?user_id=eq.${userId}&select=company_id`,
-    { headers },
-  );
-  const members: { company_id: string }[] = await membersResp.json();
-  for (const { company_id } of members) {
-    await request.delete(`${SUPABASE_URL}/rest/v1/company_members?company_id=eq.${company_id}`, {
-      headers,
-    });
-    await request.delete(`${SUPABASE_URL}/rest/v1/companies?id=eq.${company_id}`, { headers });
-  }
-
-  await request.delete(`${SUPABASE_URL}/auth/v1/admin/users/${userId}`, { headers });
+  await cleanupUser(request, userId);
 });
 
 test("login -> onboarding -> dashboard -> logout, plus unauthenticated redirect", async ({

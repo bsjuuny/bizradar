@@ -1,20 +1,11 @@
 import { requireCompany } from "@/lib/dal";
-import { logout } from "./actions";
 
 export default async function DashboardPage() {
-  const membership = await requireCompany();
-  const { company } = membership;
+  const { company } = await requireCompany();
 
   return (
-    <main className="mx-auto flex min-h-screen w-full max-w-2xl flex-col gap-6 px-4 py-12">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">{company.name}</h1>
-        <form action={logout}>
-          <button type="submit" className="text-sm underline">
-            로그아웃
-          </button>
-        </form>
-      </div>
+    <div className="flex flex-col gap-6">
+      <h1 className="text-2xl font-semibold">{company.name}</h1>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
         <dt className="text-muted-foreground">직원 규모</dt>
         <dd>{company.size_band}</dd>
@@ -28,8 +19,8 @@ export default async function DashboardPage() {
         <dd>{company.founded_year ?? "-"}</dd>
       </dl>
       <p className="text-sm text-muted-foreground">
-        Project Radar / Support Radar / Market Radar는 이후 Phase에서 추가됩니다.
+        Support Radar / Market Radar는 이후 Phase에서 추가됩니다.
       </p>
-    </main>
+    </div>
   );
 }
