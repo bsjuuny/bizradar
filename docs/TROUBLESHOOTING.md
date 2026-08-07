@@ -65,6 +65,36 @@ The DB password (Project Settings -> Database) is separate from the CLI access t
 and from the `service_role` API key - three different secrets. Reset it from the
 dashboard if it's not the one you have on hand.
 
+## `next dev` blocks static chunks: "Blocked cross-origin request... from 127.0.0.1"
+
+Next's dev-origin protection treats `127.0.0.1` and `localhost` as different origins.
+Playwright's default `baseURL` is `127.0.0.1`. Fix: add `allowedDevOrigins: ["127.0.0.1"]`
+to `next.config.ts` (done in `apps/web/next.config.ts`).
+
+## Middleware doesn't run - file should be `proxy.ts`, not `middleware.ts`
+
+Next.js 16 renamed Middleware to Proxy. The file is `proxy.ts` (or inside `src/` when
+using a `src` layout), the exported function is `proxy` (or a default export), and
+`export const config = { matcher: [...] }` still works the same way. A `middleware.ts`
+file is simply never picked up - no error, no warning, it just silently doesn't run.
+
+## Supabase `signUp()` returns "Email address ... is invalid" for made-up domains
+
+This project has email domain validation on: `auth.signUp()` rejects any address whose
+domain doesn't have real MX records (`example.com`, `bizradar-playwright-test.com`, ...).
+Admin-created users (`POST /auth/v1/admin/users`, used by `supabase/tests/test_rls_phase1.py`
+and the e2e test's `beforeAll`) bypass this check, which is why those work with
+`@example.com` but a UI-driven signup test needs a real, resolvable domain (a Gmail
+plus-alias like `you+test-x@gmail.com` works and is only ever seen by the project owner).
+
+## Supabase `signUp()` returns "email rate limit exceeded"
+
+The built-in dev mailer (no custom SMTP configured) has a low rate limit by default -
+this is expected on a fresh project, not a bug. `apps/web/e2e/core-flow.spec.ts`'s signup
+test treats this as a legitimate outcome (asserts the error is surfaced to the user
+rather than crashing) instead of retrying or hiding it. Configure custom SMTP in the
+Supabase dashboard (Auth -> Emails) if this needs to stop happening in practice.
+
 ## Worker can't find `worker` package
 
 Run `pip install -e ".[dev]"` from the repo root (not from `worker/`) - the package is

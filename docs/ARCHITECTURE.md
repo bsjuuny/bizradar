@@ -45,6 +45,9 @@ explainable and reproducible, and keeps Ollama off the hot path for every dashbo
 
 ## Status
 
-Phase 0 only: this document describes the target architecture. Only the interfaces
-(`BaseCollector`, `AIProvider`) and the PM2/web scaffolding exist so far - no concrete
-collector, AI provider, or match engine implementation has landed yet.
+Phase 0 + Phase 1: this document describes the target architecture. Auth + company
+profile (Supabase Auth, `proxy.ts` optimistic redirects, RLS-backed data access) are
+implemented and verified against the real linked project - see
+`docs/VERIFICATION_REPORT.md`. The `BaseCollector`/`AIProvider` interfaces exist but have
+no concrete implementation yet (collectors, AI provider, match engine land in later
+phases per `docs/MVP_SCOPE.md`).

@@ -8,10 +8,14 @@ npm run typecheck   # tsc --noEmit, strict mode
 npm run test         # vitest (watch)
 npm run test:run    # vitest run (CI)
 npm run build        # next build - must succeed
+npm run test:e2e    # Playwright - core user flow, against the real linked Supabase project
 ```
 
-Playwright is reserved for a small smoke suite over the core user flow (signup -> company
-setup -> dashboard) once that flow exists - not a large E2E suite.
+Playwright (`apps/web/e2e/`) is reserved for the core user flow smoke test (login ->
+onboarding -> dashboard -> logout, plus the signup call) - not a large E2E suite. It runs
+against the real linked Supabase project (no local/mocked backend), creates its own
+throw-away auth users via the Admin API, and cleans them up in `afterAll` even on
+failure. Requires `.env.worker` and `apps/web/.env.local` to be filled in.
 
 ## Worker (repo root, venv active)
 
@@ -32,7 +36,7 @@ mypy worker
 - A bug fix always gets a regression test that reproduces the bug first, then the fix,
   then the same test passing, then the surrounding module's tests, then the full suite.
 
-## What's actually covered right now (Phase 0)
+## What's actually covered right now (Phase 0 + Phase 1)
 
 - `worker/tests/test_config.py` - `Settings` defaults (`data_mode=mock`, local Ollama
   URL/model, no Supabase creds required to import).
@@ -41,6 +45,15 @@ mypy worker
 - `worker/tests/test_ai_base.py` - `AIProvider` can't be instantiated directly.
 - `apps/web/src/app/api/health/route.test.ts` - `/api/health` returns 200 + `{status:
   "ok"}`.
+- `supabase/tests/test_rls_phase1.py` - RLS against the real project: A reads own
+  company/not B's, B not A's, membership row isolation, public-read/service-role-write
+  on `worker_heartbeats`, anon/authenticated writes to `worker_heartbeats` rejected.
+- `apps/web/e2e/core-flow.spec.ts` - unauthenticated `/dashboard` redirects to `/login`;
+  login -> onboarding (company creation) -> dashboard (shows the created company) ->
+  logout -> session actually gone; signup calls `auth.signUp()` and correctly handles
+  both outcomes (check-email state, or the shared dev mailer's rate limit surfaced as an
+  error instead of crashing - see `docs/TROUBLESHOOTING.md`).
 
 Nothing beyond this has a test yet - there is no collector, AI provider, match engine,
-migration, or UI page to test until their respective phases land.
+support program, saved/watch feature, or further UI page to test until their respective
+phases land.

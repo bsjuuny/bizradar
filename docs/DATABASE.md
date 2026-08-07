@@ -1,9 +1,13 @@
 # Database
 
-## Status: NOT_IMPLEMENTED (Phase 1)
+## Status: Phase 1 tables implemented and RLS-verified against the live project; the
+rest are NOT_IMPLEMENTED until their phase (see table below).
 
-No Supabase migration has been written yet. This document records the schema and RLS
-design so Phase 1 implements it consistently, rather than inventing it ad hoc.
+`supabase/migrations/20260807120000_phase1_company_profile.sql` +
+`20260807130000_phase1_grants.sql` create `technologies`, `companies`,
+`company_members`, `company_technologies`, `worker_heartbeats`, and `auth_company_id()`.
+Verified with `supabase/tests/test_rls_phase1.py` against the real linked project - see
+`docs/VERIFICATION_REPORT.md`.
 
 ## Migration workflow
 
@@ -14,22 +18,41 @@ design so Phase 1 implements it consistently, rather than inventing it ad hoc.
   data without a dry-run first.
 - `npx supabase db lint --linked --fail-on error` when available.
 
-## Planned core tables (Phase 1+)
+## Core tables
 
-- `companies` - one row per customer company (name, size band, industry, region, tech
-  stack relations).
-- `company_members` - links `auth.users` to `companies` (a user belongs to exactly one
-  company for MVP scope).
+Implemented (Phase 1):
+
+- `technologies` - shared lookup for company tech stack (and later matching).
+- `companies` - one row per customer company (name, size band, industry, region,
+  business type, founded year).
+- `company_members` - links `auth.users` to `companies` (`user_id` is the primary key -
+  a user belongs to at most one company for MVP scope, no invite flow).
+- `company_technologies` - join table for a company's declared tech stack.
+- `worker_heartbeats` - `worker_name`, `last_seen_at`, `version`, `status`.
+
+Planned (later phases, see `docs/MVP_SCOPE.md`):
+
 - `opportunities` - RAW/NORMALIZED public-data records (`source`, `external_id`,
   `content_hash`, raw payload, normalized fields). Unique on `(source, external_id)` -
-  see `docs/DATA_PIPELINE.md#idempotency`.
+  see `docs/DATA_PIPELINE.md#idempotency`. (Phase 2)
 - `project_analyses` - AI output keyed to an opportunity (`model`, `model_version`,
-  `prompt_version`, `analyzed_at`, `analysis_status`).
+  `prompt_version`, `analyzed_at`, `analysis_status`). (Phase 4)
 - `match_scores` - per-company, per-opportunity score breakdown (see
-  `docs/DATA_PIPELINE.md#match-engine`).
-- `support_programs` - BizInfo/K-Startup normalized programs + eligibility status.
-- `saved_opportunities`, `watch_conditions` - per-company user state.
-- `worker_heartbeats` - `worker_name`, `last_seen_at`, `version`, `status`.
+  `docs/DATA_PIPELINE.md#match-engine`). (Phase 5)
+- `support_programs` - BizInfo/K-Startup normalized programs + eligibility status. (Phase 6)
+- `saved_opportunities`, `watch_conditions` - per-company user state. (Phase 8)
+
+## Gotchas hit while implementing Phase 1 (see `docs/TROUBLESHOOTING.md` for full detail)
+
+- Raw SQL-created tables don't automatically get `anon`/`authenticated` grants the way
+  dashboard-created tables do - RLS policies restrict an existing grant, they don't
+  create one. Every migration must `grant select/insert/update/delete` explicitly for
+  the operations its policies allow.
+- `INSERT ... RETURNING` (i.e. `Prefer: return=representation`, or Supabase JS's
+  `.insert().select()`) implicitly re-checks the table's SELECT policy on the new row.
+  For a table whose SELECT policy depends on a row created by a *second* insert (like
+  `companies` depending on `company_members`), the first insert must generate its own id
+  client-side and skip `return=representation`.
 
 ## RLS (must pass before Phase 1 is considered done)
 

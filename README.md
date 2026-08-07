@@ -3,9 +3,9 @@
 B2B SaaS MVP that helps IT/SI companies (5-50 employees) discover public-sector IT
 projects and government support programs, and track the public IT market.
 
-Status: **Phase 0 (repository + architecture + testing foundation) in progress.** See
-`docs/MVP_SCOPE.md` for the phase plan and `docs/VERIFICATION_REPORT.md` for what has
-actually been implemented and verified so far.
+Status: **Phase 0 (repo/testing foundation) and Phase 1 (Supabase auth + company
+profile) done.** See `docs/MVP_SCOPE.md` for the phase plan and
+`docs/VERIFICATION_REPORT.md` for what has actually been implemented and verified so far.
 
 ## Structure
 
@@ -27,9 +27,13 @@ share the Supabase database.
 ```bash
 cd apps/web
 npm install
-cp ../../.env.example .env.local   # fill in NEXT_PUBLIC_SUPABASE_* once a project exists
+cp ../../.env.example .env.local   # fill in NEXT_PUBLIC_SUPABASE_URL / _ANON_KEY
 npm run dev
 ```
+
+Visit `/signup` or `/login`. New users are sent through `/onboarding` (company profile
+creation) before reaching `/dashboard`. Auth/RLS setup is documented in
+`docs/DATABASE.md` and `docs/ARCHITECTURE.md`.
 
 **Worker - Windows**
 
@@ -54,9 +58,14 @@ pm2 start ecosystem.config.cjs
 ```bash
 # apps/web
 npm run lint && npm run typecheck && npm run test:run && npm run build
+npm run test:e2e    # needs .env.worker + apps/web/.env.local filled in (real Supabase project)
 
 # worker (venv active, run from repo root)
 ruff check worker && ruff format --check worker && pytest && mypy worker
+
+# supabase (needs `npx supabase link`, see docs/DATABASE.md)
+npx supabase db push --dry-run
+python supabase/tests/test_rls_phase1.py
 ```
 
 See `docs/TESTING.md` for what's covered and the testing policy (no skipping tests to
