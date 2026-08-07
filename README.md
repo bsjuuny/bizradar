@@ -3,8 +3,8 @@
 B2B SaaS MVP that helps IT/SI companies (5-50 employees) discover public-sector IT
 projects and government support programs, and track the public IT market.
 
-Status: **Phase 0 (repo/testing foundation) and Phase 1 (Supabase auth + company
-profile) done.** See `docs/MVP_SCOPE.md` for the phase plan and
+Status: **Phase 0 (repo/testing foundation), Phase 1 (Supabase auth + company profile),
+and Phase 2 (G2B collector) done.** See `docs/MVP_SCOPE.md` for the phase plan and
 `docs/VERIFICATION_REPORT.md` for what has actually been implemented and verified so far.
 
 ## Structure
@@ -40,7 +40,7 @@ creation) before reaching `/dashboard`. Auth/RLS setup is documented in
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-copy .env.worker.example .env.worker
+copy .env.worker.example .env.worker   # fill in SUPABASE_SERVICE_ROLE_KEY, G2B_API_KEY
 pm2 start ecosystem.config.cjs
 ```
 
@@ -52,6 +52,9 @@ python3 -m venv .venv
 cp .env.worker.example .env.worker
 pm2 start ecosystem.config.cjs
 ```
+
+This starts `g2b-collect` (hourly) - see `docs/DATA_PIPELINE.md` for the G2B API's two
+non-obvious gotchas (path, key encoding) before touching `worker/collectors/g2b.py`.
 
 ## Verifying changes
 

@@ -95,6 +95,34 @@ test treats this as a legitimate outcome (asserts the error is surfaced to the u
 rather than crashing) instead of retrying or hiding it. Configure custom SMTP in the
 Supabase dashboard (Auth -> Emails) if this needs to stop happening in practice.
 
+## G2B (나라장터) API returns "해당 오픈API 서비스가 없거나 폐기됨" (service doesn't exist)
+
+The real path has an `ad/` segment that's very easy to miss:
+
+```
+http://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServc
+```
+
+Without `ad/`, the API returns this generic "service does not exist" error - not a 404,
+and nothing about the message suggests a path problem.
+
+## G2B API returns "SERVICE_KEY_IS_NOT_REGISTERED_ERROR" with a key that is registered
+
+data.go.kr issues an already-URL-encoded key (the "Encoding" variant - it contains
+literal `%2F`, `%2B`, `%3D` sequences). Passing it through anything that URL-encodes its
+input again (`httpx` request `params=`, `curl --data-urlencode`) double-encodes it, and
+the server can't match it to your registration - the error looks like an auth/registration
+problem but is actually a double-encoding bug. Append the key to the URL string as-is.
+
+## Korean text looks corrupted (`\udcec...` escaped surrogates) when checking Supabase data
+
+Seen while verifying `worker/collectors/g2b.py` output with
+`curl ".../rest/v1/opportunities?..." | python -m json.tool`. This is not a real data bug
+- `python -m json.tool` reading piped stdin on Windows decodes using the console's
+default codepage, not UTF-8, and mangles multi-byte Korean text. Verify with `httpx` in
+Python instead (same stack the app actually uses), or write the piped output to a file
+and read it back with `encoding="utf-8"` explicitly.
+
 ## Worker can't find `worker` package
 
 Run `pip install -e ".[dev]"` from the repo root (not from `worker/`) - the package is

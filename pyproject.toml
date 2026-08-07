@@ -42,3 +42,4 @@ select = ["E", "F", "I", "UP", "B", "SIM"]
 python_version = "3.12"
 packages = ["worker"]
 ignore_missing_imports = true
+plugins = ["pydantic.mypy"]

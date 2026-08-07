@@ -193,15 +193,94 @@ onboarding flow, not just in the test's workaround.
   scope, matching `docs/DATABASE.md`'s "one company per user" invariant - not a gap, a
   deliberate scope line.
 
-## Completion status table
+---
+
+# Phase 2: G2B Collector + Raw Data + Normalization
+
+## Commands / runs actually executed
+
+| Step | Result |
+|---|---|
+| Live API probe (`curl`, wrong path) | FAIL - `NO_OPENAPI_SERVICE_ERROR` (path missing `ad/`) |
+| Live API probe (correct path, double-encoded key) | FAIL - `SERVICE_KEY_IS_NOT_REGISTERED_ERROR` |
+| Live API probe (correct path, key as-is) | PASS - real 5-item response, saved as `fixtures/g2b/bid_list_servc_sample.json` |
+| `npx supabase db push --dry-run` / `db lint` / `db push` (opportunities migration) | PASS |
+| `pytest worker/tests/test_g2b_collector.py` | PASS - 11/11 |
+| `pytest` (full worker suite, incl. new `test_g2b_job.py`, `test_logging_config.py`) | PASS - 23/23 |
+| `ruff check` / `ruff format --check` / `mypy worker` | PASS (after 2 fixes, see below) |
+| Live run: `G2BCollector(since=-3d, page_size=5, max_records=5).run()` | PASS - 5 collected, 5 persisted, 0 failed |
+| Re-run of the same window (idempotency check) | PASS - still 5 rows, only `updated_at` changed |
+| `pm2 start ecosystem.config.cjs` with `g2b-collect` job registered | PASS - online, `Added job "run"` logged, 0 restarts; stopped/deleted after |
+
+## Errors encountered and fixed this phase
+
+1. Wrong endpoint path (`.../BidPublicInfoService/...` instead of `.../ad/BidPublicInfoService/...`)
+   - found by hitting the real API and reading the actual error, not by guessing from
+   secondhand blog posts (which disagreed with each other on this exact detail).
+2. Service key double-encoding (`--data-urlencode` / `httpx params=` on an already-encoded
+   key) - found the same way, fixed by appending the key to the URL unencoded.
+3. `mypy worker` failed on `Settings(_env_file=None, g2b_api_key=...)` in the new test
+   file with "Unexpected keyword argument", even though the *same pattern* already
+   worked in `test_config.py`. Root cause: without `plugins = ["pydantic.mypy"]` in
+   `pyproject.toml`, mypy's handling of `pydantic-settings`' special init kwargs
+   (`_env_file`, etc.) was inconsistent across call sites. Added the plugin - the
+   officially documented fix, and a generally correct config for a pydantic-heavy
+   codebase, not a workaround specific to this one test.
+4. `ruff` flagged a >100-char line in `g2b.py`'s retry-logging call; fixed with
+   `ruff format`.
+5. A verification step (`curl .../opportunities | python -m json.tool`) showed what
+   looked like corrupted Korean text - see the Database doc's Phase 2 gotchas section
+   and `docs/TROUBLESHOOTING.md`. Root-caused to the verification command itself
+   (Windows stdin codepage), not the collector; confirmed by re-querying with `httpx`
+   directly in Python and writing to a UTF-8 file, which showed correct text. No code
+   was "fixed" for this one because there was nothing wrong - recorded here so the false
+   alarm doesn't get re-investigated from scratch next time.
+
+No test was weakened or skipped to reach green.
+
+## What Phase 2 built
+
+- **Schema**: `opportunities` (RAW + NORMALIZED G2B bid announcements), RLS
+  (authenticated read, service_role write) - see `docs/DATABASE.md`.
+- **Collector**: `worker/collectors/g2b.py:G2BCollector` - pagination, retry
+  (timeout/transport/429), duplicate-response dedup, non-JSON/malformed-schema handling,
+  `max_records` for controlled live testing.
+- **Repository**: `worker/repositories/opportunities.py` - service-role upsert on
+  `(source, external_id)`.
+- **Job**: `worker/jobs/g2b_job.py`, registered hourly in `worker/scheduler/main.py`
+  (2-hour lookback window; a failure is logged and swallowed, never crashes the
+  scheduler or leaves stale data).
+- **Logging**: `worker/logging_config.py` - JSON formatter that actually includes
+  `extra=` fields (the Phase 0 `logging.basicConfig` format string silently dropped
+  them; not caught until this phase because nothing had passed `extra=` yet).
+- **Tests**: 11 new collector tests (fixtures: 1 real 5-item response, empty result,
+  service-error envelope, malformed HTML), 3 job tests, 3 logging-formatter tests - all
+  offline. Plus the live run described above (not part of `pytest`, no fixture -
+  hits the real API and real DB on purpose).
+
+## Known limitations
+
+- Only `getBidPblancListInfoServc` (용역/service) is collected - 물품/공사/외자 business
+  types are out of scope by design (public IT/SI projects are classified under 용역), not
+  an oversight.
+- No rule filter (`NON_IT`/`LIKELY_IT`/`UNKNOWN`) yet - every row is just RAW+NORMALIZED.
+  That classification is Phase 4-adjacent (nothing consumes it before then) and was
+  deliberately not added now to avoid designing it without the AI stage's actual needs in
+  hand.
+- `content_hash` is stored but nothing reads it yet (change-detection-before-re-analysis
+  is Phase 4 work).
+- `worker_heartbeats` still has no writer (noted in Phase 1 too) - `g2b_job` does not
+  report a heartbeat. Small gap, not yet needed by anything on the web side.
+
+## Completion status table (supersedes the Phase 1 table above for changed rows)
 
 | Component | Status |
 |---|---|
 | Web Build | PASS |
 | Authentication | PASS (login/logout real, e2e-tested; signup's happy path NOT TESTED - needs real email click-through) |
 | Company Profile | PASS (creation, RLS-scoped read, e2e-tested) |
-| G2B Collector | NOT TESTED (not implemented - Phase 2) |
-| Project Normalization | NOT TESTED (not implemented - Phase 2) |
+| G2B Collector | PASS (live-verified against the real API + real DB, idempotent re-run confirmed, 11/11 unit tests) |
+| Project Normalization | PASS (G2B RAW->NORMALIZED; BizInfo/K-Startup normalization NOT_IMPLEMENTED - Phase 6) |
 | AI Analysis | NOT TESTED (not implemented - Phase 4; Ollama also not installed locally) |
 | Match Engine | NOT TESTED (not implemented - Phase 5) |
 | Support Collector | NOT TESTED (not implemented - Phase 6) |
@@ -209,7 +288,7 @@ onboarding flow, not just in the test's workaround.
 | Market Aggregation | NOT TESTED (not implemented - Phase 7) |
 | Saved | NOT TESTED (not implemented - Phase 8) |
 | Watch | NOT TESTED (not implemented - Phase 8) |
-| RLS | PASS (12/12 checks against the real linked project, self-cleaning) |
-| Tests (Phase 0+1 scope) | PASS (web unit: 1/1, worker: 5/5, RLS: 12/12, e2e: 2/2) |
+| RLS | PASS (12/12 Phase 1 checks + opportunities read/write policy live-exercised) |
+| Tests (Phase 0+1+2 scope) | PASS (web unit: 1/1, worker: 23/23, RLS: 12/12, e2e: 2/2) |
 | Railway Ready | PARTIAL (`/api/health` exists and builds; env-var-driven; never deployed to Railway) |
-| PM2 Worker Ready | PASS (verified in Phase 0; unchanged this phase) |
+| PM2 Worker Ready | PASS (`g2b-collect` job registered and boot-verified this phase) |

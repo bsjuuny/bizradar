@@ -36,7 +36,7 @@ mypy worker
 - A bug fix always gets a regression test that reproduces the bug first, then the fix,
   then the same test passing, then the surrounding module's tests, then the full suite.
 
-## What's actually covered right now (Phase 0 + Phase 1)
+## What's actually covered right now (Phase 0 + Phase 1 + Phase 2)
 
 - `worker/tests/test_config.py` - `Settings` defaults (`data_mode=mock`, local Ollama
   URL/model, no Supabase creds required to import).
@@ -54,6 +54,16 @@ mypy worker
   both outcomes (check-email state, or the shared dev mailer's rate limit surfaced as an
   error instead of crashing - see `docs/TROUBLESHOOTING.md`).
 
-Nothing beyond this has a test yet - there is no collector, AI provider, match engine,
-support program, saved/watch feature, or further UI page to test until their respective
-phases land.
+- `worker/tests/test_g2b_collector.py` - response parsing (success/empty/service-error/
+  non-JSON), field normalization against a real recorded response, pagination, dedup
+  across pages, `max_records` capping, missing-API-key handling, per-record persist
+  failure isolation. All offline (`httpx.MockTransport` / recorded fixtures).
+- `worker/tests/test_g2b_job.py`, `worker/tests/test_logging_config.py` - job
+  success/failure/partial-failure logging, and the JSON log formatter.
+- Live (not part of `pytest` - see `docs/VERIFICATION_REPORT.md`): ran
+  `G2BCollector` against the real API + real Supabase project, twice, to confirm
+  idempotent upsert (same row count, only `updated_at` moves) with correct Korean text.
+
+Nothing beyond this has a test yet - there is no AI provider, match engine, support
+program, saved/watch feature, or further UI page to test until their respective phases
+land.

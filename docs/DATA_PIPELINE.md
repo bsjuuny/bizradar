@@ -1,7 +1,8 @@
 # Data Pipeline
 
-## Status: interfaces only (Phase 0). Concrete collectors land in Phase 2 (G2B) and
-Phase 6 (BizInfo, K-Startup).
+## Status: G2B collector implemented and live-verified (Phase 2). BizInfo/K-Startup
+land in Phase 6; AI analysis and match scoring in Phase 4/5 - see below for what's
+actually built vs. still just interface/design.
 
 ## Collector interface
 
@@ -23,12 +24,41 @@ outage doesn't cancel other jobs (`worker/scheduler/`). Every collector must han
 timeout, retry, pagination, empty response, malformed response, rate limiting, duplicate
 response, network failure, unexpected schema.
 
+## G2B collector (implemented, Phase 2)
+
+`worker/collectors/g2b.py:G2BCollector` - `getBidPblancListInfoServc` (용역/service bid
+announcements only; IT/SI projects are classified there, not 물품/공사/외자).
+
+```
+http://apis.data.go.kr/1230000/ad/BidPublicInfoService/getBidPblancListInfoServc
+```
+
+Two live gotchas worth knowing before touching this file (full detail in
+`docs/TROUBLESHOOTING.md`):
+
+- The path has an `ad/` segment that's easy to miss - without it the API returns a
+  generic "service does not exist" error, not a 404.
+- data.go.kr issues an already-URL-encoded ("Encoding") service key. Passing it through
+  `httpx`'s param encoding (or `curl --data-urlencode`) double-encodes it and auth fails
+  with a misleading "unregistered service key" error - append it to the URL as-is.
+
+Pagination, retry (timeout/transport errors and HTTP 429), and duplicate-response
+dedup are handled in `collect()`; a missing/unrecognized response schema, non-JSON body
+(HTML error pages happen), and the legacy `OpenAPI_ServiceResponse` error envelope are
+all handled in `parse_response_body()` without crashing. `max_records` exists
+specifically for small live-mode test runs (section 46 of the original spec) - never set
+it in the scheduled job (`worker/jobs/g2b_job.py`, hourly, 2-hour lookback window).
+
+Verified live end-to-end (2026-08-07): real API -> real `opportunities` table, Korean
+text intact, re-running the same window upserts in place (row count unchanged, only
+`updated_at` moves) - see `docs/VERIFICATION_REPORT.md`.
+
 ## Idempotency
 
-Unique key: `(source, external_id)`. Re-running a collector for the same hour must not
-create duplicate `opportunities` rows - it upserts. Change detection uses
-`content_hash` (hash of the normalized payload): if unchanged, the record is not sent
-back through AI analysis.
+Unique key: `(source, external_id)` - for G2B, `{bidNtceNo}-{bidNtceOrd}`. Re-running a
+collector for the same window must not create duplicate `opportunities` rows - it
+upserts. `content_hash` (sha256 of the canonicalized raw item) is stored on every row;
+change detection using it to skip re-analysis is Phase 4 work (nothing consumes it yet).
 
 ## RAW -> NORMALIZED -> ANALYZED -> MATCHED
 

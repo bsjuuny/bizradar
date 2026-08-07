@@ -45,9 +45,9 @@ explainable and reproducible, and keeps Ollama off the hot path for every dashbo
 
 ## Status
 
-Phase 0 + Phase 1: this document describes the target architecture. Auth + company
-profile (Supabase Auth, `proxy.ts` optimistic redirects, RLS-backed data access) are
-implemented and verified against the real linked project - see
-`docs/VERIFICATION_REPORT.md`. The `BaseCollector`/`AIProvider` interfaces exist but have
-no concrete implementation yet (collectors, AI provider, match engine land in later
-phases per `docs/MVP_SCOPE.md`).
+Phase 0 + 1 + 2: auth + company profile (Supabase Auth, `proxy.ts` optimistic redirects,
+RLS-backed data access) and the G2B collector (`worker/collectors/g2b.py`, hourly job in
+`worker/scheduler/main.py`) are implemented and verified against the real linked project
+and the real G2B API - see `docs/VERIFICATION_REPORT.md`. `AIProvider` is still interface
+-only (no concrete provider - Phase 4); match engine, BizInfo/K-Startup collectors, and
+everything past them are per `docs/MVP_SCOPE.md`'s phase plan.

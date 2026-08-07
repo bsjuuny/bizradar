@@ -1,13 +1,16 @@
 # Database
 
-## Status: Phase 1 tables implemented and RLS-verified against the live project; the
-rest are NOT_IMPLEMENTED until their phase (see table below).
+## Status: Phase 1 (company profile) + Phase 2 (opportunities) tables implemented and
+verified against the live project; the rest are NOT_IMPLEMENTED until their phase.
 
-`supabase/migrations/20260807120000_phase1_company_profile.sql` +
-`20260807130000_phase1_grants.sql` create `technologies`, `companies`,
-`company_members`, `company_technologies`, `worker_heartbeats`, and `auth_company_id()`.
-Verified with `supabase/tests/test_rls_phase1.py` against the real linked project - see
-`docs/VERIFICATION_REPORT.md`.
+- `20260807120000_phase1_company_profile.sql` + `20260807130000_phase1_grants.sql`:
+  `technologies`, `companies`, `company_members`, `company_technologies`,
+  `worker_heartbeats`, `auth_company_id()`. Verified with
+  `supabase/tests/test_rls_phase1.py`.
+- `20260807140000_phase2_opportunities.sql`: `opportunities`. Verified live via
+  `worker/collectors/g2b.py` against the real G2B API + this project.
+
+See `docs/VERIFICATION_REPORT.md` for what was actually run.
 
 ## Migration workflow
 
@@ -29,12 +32,16 @@ Implemented (Phase 1):
   a user belongs to at most one company for MVP scope, no invite flow).
 - `company_technologies` - join table for a company's declared tech stack.
 - `worker_heartbeats` - `worker_name`, `last_seen_at`, `version`, `status`.
+- `opportunities` - RAW/NORMALIZED G2B bid announcements (`source` is always `'g2b'` -
+  BizInfo/K-Startup go in `support_programs` instead, not here). `title`, `organization`,
+  `demand_organization`, `budget_amount`, `estimated_price`, `region_restriction`,
+  `posted_at`/`bid_close_at`/`open_at`, `source_url`, plus `raw_payload` (full API item)
+  and `content_hash`. Unique on `(source, external_id)` - see
+  `docs/DATA_PIPELINE.md#idempotency`. RLS: any authenticated user can `select`; only
+  `service_role` writes.
 
 Planned (later phases, see `docs/MVP_SCOPE.md`):
 
-- `opportunities` - RAW/NORMALIZED public-data records (`source`, `external_id`,
-  `content_hash`, raw payload, normalized fields). Unique on `(source, external_id)` -
-  see `docs/DATA_PIPELINE.md#idempotency`. (Phase 2)
 - `project_analyses` - AI output keyed to an opportunity (`model`, `model_version`,
   `prompt_version`, `analyzed_at`, `analysis_status`). (Phase 4)
 - `match_scores` - per-company, per-opportunity score breakdown (see
@@ -53,6 +60,18 @@ Planned (later phases, see `docs/MVP_SCOPE.md`):
   For a table whose SELECT policy depends on a row created by a *second* insert (like
   `companies` depending on `company_members`), the first insert must generate its own id
   client-side and skip `return=representation`.
+
+## Gotchas hit while implementing Phase 2 (see `docs/TROUBLESHOOTING.md` for full detail)
+
+- The G2B API's real path has an easy-to-miss `ad/` segment, and its service key is
+  pre-URL-encoded - encoding it again breaks auth with a misleading error.
+- A `curl ... | python -m json.tool` verification command showed mangled Korean text
+  (`\udcec...` escaped surrogates) and looked like a real encoding bug in the collector.
+  It wasn't - `python -m json.tool` reading piped stdin on Windows used the console's
+  default codepage, not UTF-8. Querying the same data with `httpx` directly in Python
+  and writing it to a UTF-8 file showed it was correct all along. Lesson: don't trust an
+  ad-hoc shell-pipe verification's *encoding* on Windows - verify through the same
+  HTTP/JSON stack the application actually uses.
 
 ## RLS (must pass before Phase 1 is considered done)
 
