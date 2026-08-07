@@ -1,0 +1,25 @@
+# Web - see apps/web/.gitignore for the rest (node_modules, .next, env files, etc.)
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Env / secrets
+.env
+.env.local
+.env.worker
+.env*.local
+
+# Supabase local
+supabase/.temp/
+supabase/.branches/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
