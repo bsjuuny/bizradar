@@ -1,10 +1,19 @@
 import Link from "next/link";
-import { getOpportunities } from "@/lib/opportunities";
+import { type Category, getOpportunities } from "@/lib/opportunities";
 import { formatCurrencyKRW, formatDate } from "@/lib/format";
+import { CategoryBadge } from "./category-badge";
 
-function buildHref(page: number, q: string) {
+const CATEGORY_TABS: { value: Category | ""; label: string }[] = [
+  { value: "", label: "전체" },
+  { value: "LIKELY_IT", label: "IT 관련" },
+  { value: "NON_IT", label: "IT 무관" },
+  { value: "UNKNOWN", label: "미분류" },
+];
+
+function buildHref(page: number, q: string, category: string) {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
+  if (category) params.set("category", category);
   if (page > 1) params.set("page", String(page));
   const qs = params.toString();
   return qs ? `/opportunities?${qs}` : "/opportunities";
@@ -13,13 +22,18 @@ function buildHref(page: number, q: string) {
 export default async function OpportunitiesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; page?: string }>;
+  searchParams: Promise<{ q?: string; page?: string; category?: string }>;
 }) {
   const params = await searchParams;
   const q = params.q ?? "";
   const page = params.page ? Math.max(1, parseInt(params.page, 10) || 1) : 1;
+  const category = (params.category ?? "") as Category | "";
 
-  const { items, total, pageSize } = await getOpportunities({ page, q });
+  const { items, total, pageSize } = await getOpportunities({
+    page,
+    q,
+    category: category || undefined,
+  });
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   return (
@@ -31,50 +45,75 @@ export default async function OpportunitiesPage({
         </p>
       </div>
 
-      <form className="flex gap-2" action="/opportunities">
-        <input
-          type="search"
-          name="q"
-          defaultValue={q}
-          placeholder="공고명 또는 발주기관 검색"
-          className="w-full min-w-0 max-w-sm rounded-lg border border-border bg-background px-3 py-2 text-sm"
-        />
-        <button
-          type="submit"
-          className="shrink-0 rounded-lg bg-primary px-4 py-2 text-sm font-medium whitespace-nowrap text-primary-foreground hover:bg-primary/80"
-        >
-          검색
-        </button>
-        {q && (
-          <Link
-            href="/opportunities"
-            className="flex shrink-0 items-center px-2 text-sm whitespace-nowrap text-muted-foreground underline"
+      <div className="flex flex-wrap items-center gap-4">
+        <form className="flex gap-2" action="/opportunities">
+          {category && <input type="hidden" name="category" value={category} />}
+          <input
+            type="search"
+            name="q"
+            defaultValue={q}
+            placeholder="공고명 또는 발주기관 검색"
+            className="w-full min-w-0 max-w-sm rounded-lg border border-border bg-background px-3 py-2 text-sm"
+          />
+          <button
+            type="submit"
+            className="shrink-0 rounded-lg bg-primary px-4 py-2 text-sm font-medium whitespace-nowrap text-primary-foreground hover:bg-primary/80"
           >
-            초기화
-          </Link>
-        )}
-      </form>
+            검색
+          </button>
+          {q && (
+            <Link
+              href={buildHref(1, "", category)}
+              className="flex shrink-0 items-center px-2 text-sm whitespace-nowrap text-muted-foreground underline"
+            >
+              초기화
+            </Link>
+          )}
+        </form>
+
+        <div className="flex gap-1 overflow-x-auto">
+          {CATEGORY_TABS.map((tab) => {
+            const active = tab.value === category;
+            return (
+              <Link
+                key={tab.value || "all"}
+                href={buildHref(1, q, tab.value)}
+                aria-current={active ? "page" : undefined}
+                className={
+                  "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors " +
+                  (active
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground")
+                }
+              >
+                {tab.label}
+              </Link>
+            );
+          })}
+        </div>
+      </div>
 
       {items.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border py-16 text-center text-sm text-muted-foreground">
           {q ? (
             <>
               <p>&ldquo;{q}&rdquo;에 대한 검색 결과가 없습니다.</p>
-              <Link href="/opportunities" className="mt-2 inline-block underline">
+              <Link href={buildHref(1, "", category)} className="mt-2 inline-block underline">
                 전체 공고 보기
               </Link>
             </>
           ) : (
-            <p>아직 수집된 공고가 없습니다. 수집기가 매시 정각에 실행됩니다.</p>
+            <p>조건에 맞는 공고가 없습니다. 수집기가 매시 정각에 실행됩니다.</p>
           )}
         </div>
       ) : (
         <>
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full min-w-[720px] text-sm">
+            <table className="w-full min-w-[820px] text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/40 text-left text-muted-foreground">
                   <th className="px-4 py-2.5 font-medium">공고명</th>
+                  <th className="px-4 py-2.5 font-medium">분류</th>
                   <th className="px-4 py-2.5 font-medium">발주기관</th>
                   <th className="px-4 py-2.5 text-right font-medium">배정예산</th>
                   <th className="px-4 py-2.5 font-medium">게시일</th>
@@ -87,6 +126,9 @@ export default async function OpportunitiesPage({
                       <Link href={`/opportunities/${item.id}`} className="hover:underline">
                         {item.title}
                       </Link>
+                    </td>
+                    <td className="px-4 py-3">
+                      <CategoryBadge category={item.category} />
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-muted-foreground">
                       {item.organization ?? "—"}
@@ -109,14 +151,14 @@ export default async function OpportunitiesPage({
             </span>
             <div className="flex gap-2">
               {page > 1 ? (
-                <Link href={buildHref(page - 1, q)} className="underline">
+                <Link href={buildHref(page - 1, q, category)} className="underline">
                   이전
                 </Link>
               ) : (
                 <span className="text-muted-foreground/50">이전</span>
               )}
               {page < totalPages ? (
-                <Link href={buildHref(page + 1, q)} className="underline">
+                <Link href={buildHref(page + 1, q, category)} className="underline">
                   다음
                 </Link>
               ) : (

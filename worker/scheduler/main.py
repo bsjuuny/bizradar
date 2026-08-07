@@ -7,7 +7,7 @@ import logging
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
 
-from worker.jobs import g2b_job
+from worker.jobs import analyze_job, g2b_job
 from worker.logging_config import configure_logging
 
 configure_logging()
@@ -29,7 +29,11 @@ def build_scheduler() -> BlockingScheduler:
 def main() -> None:
     scheduler = build_scheduler()
     scheduler.add_job(g2b_job.run, "interval", hours=1, id="g2b-collect")
-    logger.info("bizradar-worker starting", extra={"jobs": ["g2b-collect (hourly)"]})
+    scheduler.add_job(analyze_job.run, "interval", minutes=10, id="analyze")
+    logger.info(
+        "bizradar-worker starting",
+        extra={"jobs": ["g2b-collect (hourly)", "analyze (every 10min, batch of 5)"]},
+    )
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):

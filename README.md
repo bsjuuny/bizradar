@@ -3,10 +3,11 @@
 B2B SaaS MVP that helps IT/SI companies (5-50 employees) discover public-sector IT
 projects and government support programs, and track the public IT market.
 
-Status: **Phase 0-3 done** - repo/testing foundation, Supabase auth + company profile,
-the G2B collector, and Project Radar (browse/search collected bid announcements). See
-`docs/MVP_SCOPE.md` for the phase plan and `docs/VERIFICATION_REPORT.md` for what has
-actually been implemented and verified so far.
+Status: **Phase 0-4 done** - repo/testing foundation, Supabase auth + company profile,
+the G2B collector, Project Radar (browse/search collected bid announcements), and Ollama-
+backed AI analysis (rule filter + structured extraction). See `docs/MVP_SCOPE.md` for the
+phase plan and `docs/VERIFICATION_REPORT.md` for what has actually been implemented and
+verified so far.
 
 ## Structure
 
@@ -55,8 +56,11 @@ cp .env.worker.example .env.worker
 pm2 start ecosystem.config.cjs
 ```
 
-This starts `g2b-collect` (hourly) - see `docs/DATA_PIPELINE.md` for the G2B API's two
-non-obvious gotchas (path, key encoding) before touching `worker/collectors/g2b.py`.
+This starts `g2b-collect` (hourly - see `docs/DATA_PIPELINE.md` for the G2B API's two
+non-obvious gotchas before touching `worker/collectors/g2b.py`) and `analyze` (every 10
+minutes, batches of 5). `analyze` needs a local Ollama running with `qwen3:8b` pulled
+(`ollama pull qwen3:8b`) - without it, that job logs a failure and skips itself each run,
+G2B collection is unaffected.
 
 ## Verifying changes
 

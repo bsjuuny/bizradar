@@ -36,7 +36,7 @@ mypy worker
 - A bug fix always gets a regression test that reproduces the bug first, then the fix,
   then the same test passing, then the surrounding module's tests, then the full suite.
 
-## What's actually covered right now (Phase 0 through Phase 3)
+## What's actually covered right now (Phase 0 through Phase 4)
 
 - `worker/tests/test_config.py` - `Settings` defaults (`data_mode=mock`, local Ollama
   URL/model, no Supabase creds required to import).
@@ -72,6 +72,22 @@ mypy worker
   against whatever is actually in `opportunities` right now - no fixture/seed data of its
   own, since the point is to exercise the UI against real collector output.
 
-Nothing beyond this has a test yet - there is no AI provider, match engine, support
-program, saved/watch feature, or further UI page to test until their respective phases
-land.
+- `worker/tests/test_rule_filter.py` - classification against real titles from the
+  Phase 2 fixture (incl. the case official G2B classification got wrong).
+- `worker/tests/test_ollama_provider.py` - success first try, repair-after-invalid,
+  fails after two invalid responses, missing `response` field, `classify_project`/
+  `summarize_project` delegation, `extract_support_conditions` raises
+  `NotImplementedError`. All offline via `httpx.MockTransport`.
+- `worker/tests/test_analyze_job.py` - prompt text building, no-pending is a logged
+  no-op, persists success per item, isolates a per-item failure from the rest of the
+  batch, provider setup failure doesn't crash the job.
+- Live (not part of `pytest`): ran `analyze_job.run()` against real `LIKELY_IT`
+  opportunities + a real local Ollama instance twice - first run analyzed both and
+  persisted correct results with intact Korean text; second run made zero Ollama calls
+  (content-hash change detection working) - see `docs/VERIFICATION_REPORT.md`.
+- `apps/web/e2e/opportunities.spec.ts` (extended) - category tab filters the list and
+  shows the badge; detail page renders a seeded `SUCCESS` analysis (technology chip,
+  roles, summary) correctly.
+
+Nothing beyond this has a test yet - there is no match engine, support program,
+saved/watch feature, or further UI page to test until their respective phases land.

@@ -158,6 +158,19 @@ doesn't make sense, retry with `httpx`/`fetch` before concluding the backend is 
 this is now the second time a `curl`-on-Windows artifact looked like a real bug (see the
 Korean-mojibake entry below) and wasn't.
 
+## mypy: `.execute().data` isn't indexable / no overload matches `str`
+
+`supabase-py`'s `PostgrestResponse.data` is typed as a generic JSON union, not
+`list[dict[str, Any]]`, even though you know from the `.select(...)` call what shape it
+actually is. Cast explicitly at that point: `cast("list[dict[str, Any]]", ... .data or [])`.
+
+## A PostgREST embed across a `unique()` foreign key is still typed as an array
+
+Even when the relationship is genuinely 1:1 at the DB level (e.g. `project_analyses`
+embedded from `opportunities` via `unique(opportunity_id)`), the client library types the
+embedded field as an array. Normalize it yourself:
+`Array.isArray(x) ? (x[0] ?? null) : x`.
+
 ## Worker can't find `worker` package
 
 Run `pip install -e ".[dev]"` from the repo root (not from `worker/`) - the package is

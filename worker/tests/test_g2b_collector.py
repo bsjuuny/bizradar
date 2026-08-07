@@ -65,6 +65,9 @@ def test_normalize_maps_real_fields():
     assert normalized.posted_at == datetime(2026, 8, 4, 8, 25, 58)
     assert normalized.bid_close_at == datetime(2026, 8, 18, 12, 0, 0)
     assert normalized.content_hash == compute_content_hash(item)
+    # A school trip - the rule filter (worker/ai/rule_filter.py) should route this away
+    # from the LLM, not just leave it UNKNOWN.
+    assert normalized.category == "NON_IT"
 
 
 def test_normalize_handles_missing_and_zero_amounts():

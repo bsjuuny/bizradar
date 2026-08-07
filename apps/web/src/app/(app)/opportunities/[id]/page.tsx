@@ -2,6 +2,17 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getOpportunity } from "@/lib/opportunities";
 import { formatCurrencyKRW, formatDateTime } from "@/lib/format";
+import { CategoryBadge } from "../category-badge";
+
+const PROJECT_TYPE_LABELS: Record<string, string> = {
+  SYSTEM_BUILD: "시스템 구축",
+  MAINTENANCE: "유지보수",
+  CONSULTING: "컨설팅",
+  DATA_ANALYTICS: "데이터 분석",
+  AI_ML: "AI/ML",
+  INFRASTRUCTURE: "인프라",
+  OTHER: "기타",
+};
 
 export default async function OpportunityDetailPage({
   params,
@@ -12,13 +23,18 @@ export default async function OpportunityDetailPage({
   const opportunity = await getOpportunity(id);
   if (!opportunity) notFound();
 
+  const analysis = opportunity.analysis?.status === "SUCCESS" ? opportunity.analysis : null;
+
   return (
     <div className="flex flex-col gap-6">
       <Link href="/opportunities" className="text-sm text-muted-foreground hover:underline">
         ← Project Radar 목록으로
       </Link>
 
-      <h1 className="text-xl font-semibold text-balance">{opportunity.title}</h1>
+      <div className="flex flex-wrap items-start gap-3">
+        <h1 className="text-xl font-semibold text-balance">{opportunity.title}</h1>
+        <CategoryBadge category={opportunity.category} />
+      </div>
 
       <dl className="grid grid-cols-1 gap-x-8 gap-y-3 rounded-lg border border-border p-5 text-sm sm:grid-cols-2">
         <div>
@@ -54,6 +70,65 @@ export default async function OpportunityDetailPage({
           <dd>{formatDateTime(opportunity.open_at)}</dd>
         </div>
       </dl>
+
+      {analysis && (
+        <section className="flex flex-col gap-4 rounded-lg border border-border p-5">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold">AI 분석</h2>
+            <span className="text-xs text-muted-foreground">
+              {PROJECT_TYPE_LABELS[analysis.project_type ?? ""] ?? analysis.project_type}
+            </span>
+          </div>
+
+          {analysis.summary && <p className="text-sm text-muted-foreground">{analysis.summary}</p>}
+
+          {analysis.technologies.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {analysis.technologies.map((tech) => (
+                <span
+                  key={tech.name}
+                  title={tech.evidence}
+                  className="inline-flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs"
+                >
+                  {tech.name}
+                  <span className="text-muted-foreground tabular-nums">
+                    {Math.round(tech.confidence * 100)}%
+                  </span>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {analysis.required_roles.length > 0 && (
+            <div className="text-sm">
+              <span className="text-muted-foreground">필요 역할: </span>
+              {analysis.required_roles.join(", ")}
+            </div>
+          )}
+
+          {analysis.requirements.length > 0 && (
+            <div>
+              <p className="text-sm text-muted-foreground">요구사항</p>
+              <ul className="mt-1 list-inside list-disc text-sm">
+                {analysis.requirements.map((req) => (
+                  <li key={req}>{req}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {analysis.risks.length > 0 && (
+            <div>
+              <p className="text-sm text-muted-foreground">리스크</p>
+              <ul className="mt-1 list-inside list-disc text-sm">
+                {analysis.risks.map((risk) => (
+                  <li key={risk}>{risk}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
+      )}
 
       {opportunity.source_url && (
         <a

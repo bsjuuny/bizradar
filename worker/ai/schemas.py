@@ -24,13 +24,20 @@ class TechnologyMatch(BaseModel):
     evidence: str
 
 
-class ProjectAnalysis(BaseModel):
+class ProjectExtraction(BaseModel):
+    """The part an LLM actually generates - no provenance metadata. Validated directly
+    against the model's raw JSON output before anything downstream sees it."""
+
     project_type: ProjectType
     technologies: list[TechnologyMatch] = []
     required_roles: list[str] = []
     requirements: list[str] = []
     risks: list[str] = []
     summary: str = ""
+
+
+class ProjectAnalysis(ProjectExtraction):
+    """A ProjectExtraction plus the provenance fields the worker adds, not the LLM."""
 
     model: str
     model_version: str

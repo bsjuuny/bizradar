@@ -410,3 +410,109 @@ format is now consistent.
 | Tests (Phase 0-3 scope) | PASS (web unit: 8/8, worker: 23/23, RLS: 12/12, e2e: 8/8) |
 | Railway Ready | PARTIAL (`/api/health` exists and builds; env-var-driven; never deployed to Railway) |
 | PM2 Worker Ready | PASS (unchanged this phase) |
+
+---
+
+# Phase 4: Ollama + Structured Analysis
+
+## Environment change since Phase 3
+
+Ollama installed by the user mid-session (`ollama pull qwen3:8b`, confirmed via
+`GET http://127.0.0.1:11434/api/tags` -> `qwen3:8b`, size 5.2GB, before any provider code
+was written).
+
+## Commands / runs actually executed
+
+| Step | Result |
+|---|---|
+| Live probe: `POST /api/generate` with `format: <json_schema>` against a real G2B title, before writing `OllamaProvider` | PASS - valid schema-conforming JSON, correct Korean text, ~61s (cold model load) |
+| `npx supabase db push --dry-run` / `db lint` / `db push` x3 (category column, project_analyses, analyzed_content_hash) | PASS |
+| `pytest worker/tests/test_rule_filter.py` | PASS - 8/8, against real Phase 2 fixture titles |
+| `pytest worker/tests/test_ollama_provider.py` | PASS - 7/7, offline via `httpx.MockTransport` |
+| `pytest worker/tests/test_analyze_job.py` | PASS - 5/5 |
+| `pytest` (full worker suite) | PASS - 43/43 |
+| `ruff check` / `ruff format --check` / `mypy worker` | PASS (after fixes, see below) |
+| Live: re-ran `G2BCollector` to backfill `category` on the 5 real rows | PASS - 2 LIKELY_IT, 3 NON_IT, matches manual expectation |
+| Live: `analyze_job.run()` against the 2 real LIKELY_IT opportunities + real Ollama | PASS - both `SUCCESS`, correct Korean text, correct provenance (model/model_version/prompt_version/analyzed_at) |
+| Live: `analyze_job.run()` again immediately | PASS - 0 Ollama calls (content-hash change detection confirmed working, not just unit-tested) |
+| `npm run lint` / `typecheck` / `test:run` / `build` (apps/web) | PASS |
+| `npm run test:e2e` (8 tests: 6 existing + 2 new) | PASS - 8/8 |
+| `pm2 start ecosystem.config.cjs` with both `g2b-collect` and `analyze` registered | PASS - online, 0 restarts; stopped/deleted after |
+
+## Errors encountered and fixed this phase
+
+1. `mypy` failed on `worker/repositories/project_analyses.py`: `supabase-py`'s
+   `.execute().data` is a generic JSON union, not `list[dict[str, Any]]`. Fixed with an
+   explicit `cast(...)` at the two call sites where the actual shape is known from the
+   `.select(...)` call.
+2. First live analysis output showed `technologies: []` and a summary that just restated
+   the title, which initially looked like a broken extraction. Investigated rather than
+   assumed: the worker only sends title/organization/budget to the model (G2B's list API
+   has no long-form spec text, only links to attached documents, and parsing those -
+   including legacy HWP - is explicitly out of MVP scope). Concluded this is correct
+   behavior for thin input, not a bug, and documented it as a known limitation instead of
+   trying to force richer output from insufficient input.
+3. TypeScript: initial `getOpportunity()` typed the embedded `project_analyses` as
+   `ProjectAnalysis` directly, but the runtime shape from PostgREST is an array even for
+   a `unique(opportunity_id)` 1:1 relationship. Caught by reading the actual embed shape,
+   not assumed from the schema - normalized with `Array.isArray(...) ? arr[0] ?? null : x`.
+4. First `test_analyze_job.py` run: `test_run_no_pending_opportunities_is_a_noop`
+   asserted no "analyze job finished" log line, but the job correctly always logs a
+   summary (0/0 counts included) for observability - the test's expectation was wrong,
+   not the code. Fixed the assertion to check the logged counts instead of absence.
+
+No test was weakened to reach green; #1 and #3 are real type-safety fixes, #2 is a
+documented, understood limitation rather than a hidden one, #4 corrected the test to
+match genuinely correct (and more observable) job behavior.
+
+## What Phase 4 built
+
+- **Rule filter**: `worker/ai/rule_filter.py:classify()` - keyword-based, called from
+  `G2BCollector.normalize()` at collection time. `opportunities.category` column.
+- **AI provider**: `worker/ai/ollama_provider.py:OllamaProvider` - the first concrete
+  `AIProvider`. JSON-schema-constrained Ollama calls, one repair attempt on validation
+  failure, `worker/ai/schemas.py` split into `ProjectExtraction` (LLM content) and
+  `ProjectAnalysis` (+ provenance, added by the caller).
+- **Schema**: `project_analyses` (1:1 with `opportunities`, `analyzed_content_hash` for
+  change detection), RLS (authenticated read, service_role write).
+- **Job**: `worker/jobs/analyze_job.py`, registered every 10 minutes (batch of 5) in
+  `worker/scheduler/main.py`. Per-item failure isolation; total failure (Ollama down) is
+  caught and logged, not raised.
+- **Web**: category badge + filter tabs on the list page; an "AI 분석" section on the
+  detail page (project type, technology chips with confidence, roles/requirements/risks,
+  summary) shown only when a `SUCCESS` analysis exists.
+- **Tests**: 20 new worker tests (rule filter, provider, job - all offline), 2 new e2e
+  tests (category filter, seeded analysis display), plus the live runs described above.
+
+## Known limitations
+
+- Analysis quality is bounded by input richness (title/org/budget only) - see the
+  "Errors encountered" #2 above. Not something to fix without also adding document
+  parsing, which is future work, not this phase's scope.
+- Only `LIKELY_IT` is analyzed. `UNKNOWN`-sampling for AI review (mentioned in the
+  original spec's rule-filter description) is NOT_IMPLEMENTED.
+- The repair-on-validation-failure path is verified by mocked tests only, not live -
+  reliably forcing a real model to emit invalid JSON on demand isn't practical.
+- `worker_heartbeats` still has no writer (noted in Phases 1-3 too).
+
+## Completion status table (supersedes the Phase 3 table above for changed rows)
+
+| Component | Status |
+|---|---|
+| Web Build | PASS |
+| Authentication | PASS (login/logout real, e2e-tested; signup's happy path NOT TESTED - needs real email click-through) |
+| Company Profile | PASS (creation, RLS-scoped read, e2e-tested) |
+| G2B Collector | PASS (live-verified against the real API + real DB, idempotent re-run confirmed, 12/12 unit tests) |
+| Project Normalization | PASS (G2B RAW->NORMALIZED; BizInfo/K-Startup normalization NOT_IMPLEMENTED - Phase 6) |
+| Project UI | PASS (list/search/pagination/detail/empty/error/not-found + category filter + AI analysis display, e2e-tested against real data) |
+| AI Analysis | PASS (rule filter + OllamaProvider live-verified against real Ollama + real DB; quality bounded by input richness - see known limitations) |
+| Match Engine | NOT TESTED (not implemented - Phase 5) |
+| Support Collector | NOT TESTED (not implemented - Phase 6) |
+| Support Matching | NOT TESTED (not implemented - Phase 6) |
+| Market Aggregation | NOT TESTED (not implemented - Phase 7) |
+| Saved | NOT TESTED (not implemented - Phase 8) |
+| Watch | NOT TESTED (not implemented - Phase 8) |
+| RLS | PASS (12/12 Phase 1 checks + opportunities/project_analyses read/write policies live-exercised) |
+| Tests (Phase 0-4 scope) | PASS (web unit: 8/8, worker: 43/43, RLS: 12/12, e2e: 8/8) |
+| Railway Ready | PARTIAL (`/api/health` exists and builds; env-var-driven; never deployed to Railway) |
+| PM2 Worker Ready | PASS (`g2b-collect` + `analyze` both registered and boot-verified this phase) |

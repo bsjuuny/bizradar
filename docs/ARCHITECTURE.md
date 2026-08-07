@@ -45,9 +45,13 @@ explainable and reproducible, and keeps Ollama off the hot path for every dashbo
 
 ## Status
 
-Phase 0-3 done: auth + company profile, the G2B collector, and Project Radar (the
-`opportunities` list/detail UI at `/opportunities`, under the shared `(app)` route group
-- see `docs/DATA_PIPELINE.md`) are implemented and verified against the real linked
-project, the real G2B API, and a real browser (Playwright). `AIProvider` is still
-interface-only (no concrete provider - Phase 4); match engine, BizInfo/K-Startup
-collectors, and everything past them are per `docs/MVP_SCOPE.md`'s phase plan.
+Phase 0-4 done: auth + company profile, the G2B collector, Project Radar UI, and AI
+analysis (`worker/ai/rule_filter.py` + `worker/ai/ollama_provider.py`) are implemented
+and verified against the real linked project, the real G2B API, a real local Ollama
+instance, and a real browser (Playwright). Match engine, BizInfo/K-Startup collectors,
+and everything past them are per `docs/MVP_SCOPE.md`'s phase plan.
+
+`OllamaProvider` is the first concrete `AIProvider` - it's the architecture's proof point
+that Railway never touches Ollama: the worker calls `http://127.0.0.1:11434` directly
+from the local PC, analyzes, and writes results to Supabase; the web app only ever reads
+`project_analyses`, never calls the model itself.

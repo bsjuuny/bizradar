@@ -26,6 +26,7 @@ def upsert_opportunity(normalized: G2BNormalizedOpportunity) -> None:
         "external_id": normalized.external_id,
         "content_hash": normalized.content_hash,
         "title": normalized.title,
+        "category": normalized.category,
         "organization": normalized.organization,
         "demand_organization": normalized.demand_organization,
         "budget_amount": normalized.budget_amount,

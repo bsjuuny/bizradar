@@ -19,6 +19,7 @@ from typing import Any
 import httpx
 from pydantic import BaseModel
 
+from worker.ai.rule_filter import classify
 from worker.collectors.base import BaseCollector, CollectorError, RawRecord
 from worker.config import Settings, get_settings
 
@@ -34,6 +35,7 @@ MAX_RETRIES = 3
 class G2BNormalizedOpportunity(BaseModel):
     external_id: str
     title: str
+    category: str
     organization: str | None = None
     demand_organization: str | None = None
     budget_amount: float | None = None
@@ -229,9 +231,11 @@ class G2BCollector(BaseCollector[G2BNormalizedOpportunity]):
 
     def normalize(self, raw: RawRecord) -> G2BNormalizedOpportunity:
         item = raw.payload
+        title = (item.get("bidNtceNm") or "").strip()
         return G2BNormalizedOpportunity(
             external_id=raw.external_id,
-            title=(item.get("bidNtceNm") or "").strip(),
+            title=title,
+            category=classify(title),
             organization=item.get("ntceInsttNm") or None,
             demand_organization=item.get("dminsttNm") or None,
             budget_amount=_parse_amount(item.get("asignBdgtAmt")),

@@ -87,3 +87,65 @@ test("a nonexistent opportunity id renders the not-found page", async ({ page })
   await page.goto("/opportunities/00000000-0000-0000-0000-000000000000");
   await expect(page.getByText("해당 공고를 찾을 수 없습니다.")).toBeVisible();
 });
+
+test("category tab filters the list and shows the category badge", async ({ page }) => {
+  await page.goto("/opportunities?category=NON_IT");
+  await expect(page.getByRole("link", { name: "IT 무관" })).toHaveAttribute("aria-current", "page");
+
+  const rowCount = await page.locator("table tbody tr").count();
+  if (rowCount > 0) {
+    await expect(page.locator("table tbody tr").first().getByText("IT 무관")).toBeVisible();
+  }
+});
+
+test("detail page shows AI analysis for an analyzed opportunity", async ({ page, request }) => {
+  const headers = {
+    apikey: SERVICE_ROLE_KEY,
+    Authorization: `Bearer ${SERVICE_ROLE_KEY}`,
+    "Content-Type": "application/json",
+  };
+  const opportunityId = randomUUID();
+
+  await request.post(`${SUPABASE_URL}/rest/v1/opportunities`, {
+    headers,
+    data: {
+      id: opportunityId,
+      source: "g2b",
+      external_id: `e2e-analysis-${opportunityId}`,
+      content_hash: "e2e-test-hash",
+      title: "E2E 테스트용 AI 챗봇 구축 용역",
+      category: "LIKELY_IT",
+      raw_payload: {},
+    },
+  });
+  await request.post(`${SUPABASE_URL}/rest/v1/project_analyses`, {
+    headers,
+    data: {
+      opportunity_id: opportunityId,
+      status: "SUCCESS",
+      project_type: "AI_ML",
+      technologies: [{ name: "Python", confidence: 0.92, evidence: "명시적으로 언급됨" }],
+      required_roles: ["백엔드 개발자"],
+      requirements: ["대화형 챗봇 UI 개발"],
+      risks: ["일정 지연 가능성"],
+      summary: "E2E 테스트용 요약입니다.",
+      model: "qwen3:8b",
+      model_version: "test",
+      prompt_version: "v1",
+      analyzed_content_hash: "e2e-test-hash",
+    },
+  });
+
+  try {
+    await page.goto(`/opportunities/${opportunityId}`);
+    await expect(page.getByRole("heading", { name: "AI 분석" })).toBeVisible();
+    await expect(page.getByText("E2E 테스트용 요약입니다.")).toBeVisible();
+    await expect(page.getByText("Python", { exact: false })).toBeVisible();
+    await expect(page.getByText("백엔드 개발자")).toBeVisible();
+  } finally {
+    await request.delete(`${SUPABASE_URL}/rest/v1/project_analyses?opportunity_id=eq.${opportunityId}`, {
+      headers,
+    });
+    await request.delete(`${SUPABASE_URL}/rest/v1/opportunities?id=eq.${opportunityId}`, { headers });
+  }
+});

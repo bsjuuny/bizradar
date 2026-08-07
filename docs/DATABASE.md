@@ -1,6 +1,6 @@
 # Database
 
-## Status: Phase 1-3 tables implemented and verified against the live project; the rest
+## Status: Phase 1-4 tables implemented and verified against the live project; the rest
 are NOT_IMPLEMENTED until their phase.
 
 - `20260807120000_phase1_company_profile.sql` + `20260807130000_phase1_grants.sql`:
@@ -12,6 +12,9 @@ are NOT_IMPLEMENTED until their phase.
 - `20260807150000_phase3_opportunities_search.sql` +
   `20260807160000_phase3_search_trgm.sql`: search over `opportunities`. Verified via
   `apps/web/e2e/opportunities.spec.ts` against the real project.
+- `20260807170000_phase4_project_analyses.sql` + `20260807180000_phase4_analyzed_content_hash.sql`:
+  `opportunities.category`, `project_analyses`. Verified live via
+  `worker/jobs/analyze_job.py` against a real local Ollama instance + this project.
 
 See `docs/VERIFICATION_REPORT.md` for what was actually run.
 
@@ -43,12 +46,19 @@ Implemented (Phase 1):
   `docs/DATA_PIPELINE.md#idempotency`. RLS: any authenticated user can `select`; only
   `service_role` writes. Also has `search_vector` (generated `tsvector`, GIN-indexed)
   plus `gin_trgm_ops` trigram indexes on `title`/`organization` for substring search -
-  see the Phase 3 gotcha below for why both exist.
+  see the Phase 3 gotcha below for why both exist. `category`
+  (`NON_IT`/`LIKELY_IT`/`UNKNOWN`) is set by `worker/ai/rule_filter.py` at collection
+  time, not a separate job - see `docs/DATA_PIPELINE.md`.
+- `project_analyses` - AI output keyed to an opportunity 1:1 (`unique(opportunity_id)`):
+  `status` (`PENDING`/`SUCCESS`/`FAILED`), `project_type`, `technologies`/
+  `required_roles`/`requirements`/`risks` (jsonb), `summary`, `model`, `model_version`,
+  `prompt_version`, `analyzed_at`, `analyzed_content_hash` (the `opportunities
+  .content_hash` this row was computed against - re-analysis only happens when it
+  changes), `error_message`. RLS: any authenticated user can `select`; only
+  `service_role` writes.
 
 Planned (later phases, see `docs/MVP_SCOPE.md`):
 
-- `project_analyses` - AI output keyed to an opportunity (`model`, `model_version`,
-  `prompt_version`, `analyzed_at`, `analysis_status`). (Phase 4)
 - `match_scores` - per-company, per-opportunity score breakdown (see
   `docs/DATA_PIPELINE.md#match-engine`). (Phase 5)
 - `support_programs` - BizInfo/K-Startup normalized programs + eligibility status. (Phase 6)
@@ -90,6 +100,19 @@ Planned (later phases, see `docs/MVP_SCOPE.md`):
   reference in `.next/types/`, which made `tsc --noEmit` fail on a file that no longer
   existed. Deleting `.next/` and re-running `next build` (which regenerates route types)
   fixed it - this is generated output, never a real code problem.
+
+## Gotchas hit while implementing Phase 4 (see `docs/TROUBLESHOOTING.md` for full detail)
+
+- `supabase-py`'s `.execute().data` is typed as a generic JSON union
+  (`bool | str | int | float | Sequence[JSON] | Mapping[str, JSON] | None`), not
+  `list[dict[str, Any]]` - mypy correctly refuses `row["id"]` on it. Cast explicitly
+  (`cast("list[dict[str, Any]]", ...)`) at the point where you know the actual shape from
+  the `.select(...)` call, rather than loosening types elsewhere.
+- A PostgREST embed across a `unique(opportunity_id)` foreign key
+  (`project_analyses(...)` embedded from `opportunities`) is a true 1:1 relationship at
+  the DB level, but the client library still types the embed as an array - normalize it
+  (`Array.isArray(x) ? x[0] ?? null : x`) rather than assuming the runtime shape matches
+  the "obviously 1:1" schema.
 
 ## RLS (must pass before Phase 1 is considered done)
 
