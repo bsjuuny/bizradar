@@ -362,6 +362,33 @@ fixed the test's own bug, not the page under test.
 - No sort/filter controls beyond the search box (e.g. by budget, region, deadline) -
   not in this phase's scope.
 
+## Post-build design review (screenshots, real browser)
+
+Screenshotted every new page at desktop (1280px) and mobile (390px) width via a headless
+Chromium script against the real dev server + real logged-in session, per the user's
+request to check the design once functionality was done. Found and fixed two real mobile
+bugs, not cosmetic nitpicks:
+
+1. **Nav text broke one Korean character per line** ("대시보드" rendered as 6 stacked
+   single-character lines). Cause: flex items had no `white-space: nowrap`, and CJK text
+   has no word-boundary concept for the browser's default line-breaking, so a squeezed
+   flex item wraps between any two syllables. Fixed with `whitespace-nowrap` on nav/header
+   text plus `overflow-x-auto` + `shrink-0` on the header row, so it scrolls horizontally
+   on narrow screens instead of crushing text vertically.
+2. **Opportunities table crushed to unreadable single-character-wide columns** on mobile.
+   The wrapper already had `overflow-x-auto`, but the `<table>` itself had no
+   `min-width`, so the browser shrank columns to fit instead of triggering the scroll.
+   Fixed with `min-w-[720px]` on the table.
+
+Also fixed while reviewing the detail page: `Intl.DateTimeFormat("ko-KR", {timeStyle:
+"short"})` rendered `PM 5:46` - English AM/PM inside an otherwise-Korean date, from a gap
+in Node's bundled ICU data rather than a real ko-KR limitation. Switched to `hour12:
+false` (24-hour time), which is unambiguous either way and sidesteps the gap entirely.
+
+Re-verified after fixes: lint/typecheck/build/e2e (6/6) all still green, plus a second
+screenshot pass confirming the mobile nav and table render correctly and the datetime
+format is now consistent.
+
 ## Completion status table (supersedes the Phase 2 table above for changed rows)
 
 | Component | Status |

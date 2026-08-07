@@ -9,14 +9,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   return (
     <div className="flex min-h-screen flex-col">
       <header className="border-b border-border">
-        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-4 px-4 py-3">
-          <div className="flex items-center gap-6">
-            <Link href="/dashboard" className="text-lg font-semibold tracking-tight">
+        <div className="mx-auto flex w-full max-w-5xl items-center justify-between gap-4 overflow-x-auto px-4 py-3">
+          <div className="flex shrink-0 items-center gap-6">
+            <Link href="/dashboard" className="text-lg font-semibold tracking-tight whitespace-nowrap">
               BizRadar
             </Link>
             <NavLinks />
           </div>
-          <div className="flex items-center gap-3 text-sm">
+          <div className="flex shrink-0 items-center gap-3 text-sm whitespace-nowrap">
             <span className="text-muted-foreground">{company.name}</span>
             <form action={logout}>
               <button type="submit" className="underline">

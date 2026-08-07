@@ -14,9 +14,12 @@ export function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return "—";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "—";
+  // hour12: false sidesteps a Node ICU gap where ko-KR's AM/PM day period falls back
+  // to English ("PM") instead of 오전/오후 - 24-hour time is also just clearer here.
   return new Intl.DateTimeFormat("ko-KR", {
     dateStyle: "medium",
     timeStyle: "short",
     timeZone: "Asia/Seoul",
+    hour12: false,
   }).format(date);
 }

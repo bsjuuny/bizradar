@@ -37,18 +37,18 @@ export default async function OpportunitiesPage({
           name="q"
           defaultValue={q}
           placeholder="공고명 또는 발주기관 검색"
-          className="w-full max-w-sm rounded-lg border border-border bg-background px-3 py-2 text-sm"
+          className="w-full min-w-0 max-w-sm rounded-lg border border-border bg-background px-3 py-2 text-sm"
         />
         <button
           type="submit"
-          className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/80"
+          className="shrink-0 rounded-lg bg-primary px-4 py-2 text-sm font-medium whitespace-nowrap text-primary-foreground hover:bg-primary/80"
         >
           검색
         </button>
         {q && (
           <Link
             href="/opportunities"
-            className="flex items-center px-2 text-sm text-muted-foreground underline"
+            className="flex shrink-0 items-center px-2 text-sm whitespace-nowrap text-muted-foreground underline"
           >
             초기화
           </Link>
@@ -71,7 +71,7 @@ export default async function OpportunitiesPage({
       ) : (
         <>
           <div className="overflow-x-auto rounded-lg border border-border">
-            <table className="w-full text-sm">
+            <table className="w-full min-w-[720px] text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/40 text-left text-muted-foreground">
                   <th className="px-4 py-2.5 font-medium">공고명</th>
