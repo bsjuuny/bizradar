@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from worker.collectors.base import CollectorError, RawRecord
-from worker.collectors.g2b import G2BCollector, compute_content_hash, parse_response_body
+from worker.collectors.g2b import G2BCollector, _parse_yn, compute_content_hash, parse_response_body
 from worker.config import Settings
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "g2b"
@@ -68,6 +68,14 @@ def test_normalize_maps_real_fields():
     # A school trip - the rule filter (worker/ai/rule_filter.py) should route this away
     # from the LLM, not just leave it UNKNOWN.
     assert normalized.category == "NON_IT"
+    # Notice-thread identity (docs/DATA_PIPELINE.md#notice-thread-deduplication).
+    assert normalized.bid_ntce_no == "R26BK01664082"
+    assert normalized.bid_ntce_ord == 0
+    assert normalized.ntce_kind_nm == "등록공고"
+    # Market-stats fields (docs/DATA_PIPELINE.md#market-statistics).
+    assert normalized.industry_limited is True
+    assert normalized.participation_limited is False
+    assert normalized.procurement_category == "국내여행서비스"
 
 
 def test_normalize_handles_missing_and_zero_amounts():
@@ -82,6 +90,22 @@ def test_normalize_handles_missing_and_zero_amounts():
 
     assert normalized.budget_amount is None
     assert normalized.estimated_price is None
+    assert normalized.bid_ntce_no is None
+    assert normalized.bid_ntce_ord is None
+    assert normalized.ntce_kind_nm is None
+    assert normalized.industry_limited is None
+    assert normalized.participation_limited is None
+    assert normalized.procurement_category is None
+
+
+def test_parse_yn_treats_empty_string_as_unknown_not_false():
+    # G2B sometimes sends "" rather than omitting a Y/N field entirely - that means "not
+    # stated", which must stay None (unknown), not silently become False ("no
+    # restriction") for market-stats purposes.
+    assert _parse_yn("Y") is True
+    assert _parse_yn("N") is False
+    assert _parse_yn("") is None
+    assert _parse_yn(None) is None
 
 
 def test_validate_rejects_empty_title():

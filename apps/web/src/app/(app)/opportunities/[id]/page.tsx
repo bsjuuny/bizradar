@@ -17,26 +17,36 @@ const PROJECT_TYPE_LABELS: Record<string, string> = {
 
 export default async function OpportunityDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ from?: string }>;
 }) {
   const { id } = await params;
+  const { from } = await searchParams;
   const opportunity = await getOpportunity(id);
   if (!opportunity) notFound();
 
   const analysis = opportunity.analysis?.status === "SUCCESS" ? opportunity.analysis : null;
+  // `from` is the list page's own search/filter/page query string, passed through by
+  // its row links (see opportunities/page.tsx) so this restores that exact view instead
+  // of resetting to the default list.
+  const backHref = from ? `/opportunities?${from}` : "/opportunities";
 
   return (
     <div className="flex flex-col gap-6">
-      <Link href="/opportunities" className="text-sm text-muted-foreground hover:underline">
+      <Link href={backHref} className="text-sm text-muted-foreground hover:underline">
         ← Project Radar 목록으로
       </Link>
 
-      <div className="flex flex-wrap items-start gap-3">
-        <h1 className="text-xl font-semibold text-balance">{opportunity.title}</h1>
-        <CategoryBadge category={opportunity.category} />
-        <MatchScoreBadge score={opportunity.matchScore} />
-      </div>
+      <header className="flex flex-col gap-3 border-b border-border pb-6">
+        <div className="flex flex-wrap items-center gap-2">
+          <CategoryBadge category={opportunity.category} />
+          <MatchScoreBadge score={opportunity.matchScore} />
+        </div>
+        <h1 className="max-w-4xl text-2xl font-semibold leading-snug text-balance">{opportunity.title}</h1>
+        <p className="text-sm text-muted-foreground">{opportunity.organization ?? "공고기관 미확인"}</p>
+      </header>
 
       {opportunity.matchBreakdown && (
         <section className="rounded-lg border border-border p-5">

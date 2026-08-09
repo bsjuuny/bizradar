@@ -19,7 +19,13 @@ Ollama, and a local Ollama outage must never become a Railway incident. See
 - `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` - browser-safe, RLS-enforced.
 - `SUPABASE_SERVICE_ROLE_KEY` - worker only, loaded from `.env.worker`, never bundled into
   the Next.js build and never committed. Railway does not hold this key unless a specific
-  feature later requires it.
+  feature later requires it - as of 2026-08-09, one does: `apps/web/src/lib/supabase/
+  admin.ts` uses it, server-side only, exclusively for company-approval actions gated by
+  `requireAdmin()`. `authenticated` has no UPDATE privilege on `companies
+  .approval_status` at all (see `docs/DATABASE.md`'s Phase 6 gotchas) precisely so no
+  client-reachable code path can approve a company - service_role is the only way to
+  flip it, which is why this one narrow exception exists. Never referenced from a
+  `"use client"` file.
 
 ## Data flow (per source: G2B, BizInfo, K-Startup)
 

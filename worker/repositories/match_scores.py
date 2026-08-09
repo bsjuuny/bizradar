@@ -70,8 +70,12 @@ def get_companies_for_matching() -> list[tuple[str, CompanyProfile]]:
 
 
 def get_analyzed_opportunities() -> list[tuple[str, OpportunityRequirements]]:
-    """Returns (opportunity_id, requirements) for every opportunity with a SUCCESS
-    analysis - only these have anything for the Match Engine to score against."""
+    """Returns (opportunity_id, requirements) for every *current* opportunity with a
+    SUCCESS analysis - only these have anything for the Match Engine to score against.
+    Reads the opportunity side from opportunities_current, not the raw table, so a
+    superseded/cancelled G2B notice revision (docs/DATA_PIPELINE.md#notice-thread-
+    deduplication) is silently skipped via the existing `opp is None` fallback below,
+    rather than getting a match_scores row nothing will ever display."""
     client = get_service_client()
 
     analysis_columns = (
@@ -92,7 +96,7 @@ def get_analyzed_opportunities() -> list[tuple[str, OpportunityRequirements]]:
     ids = [a["opportunity_id"] for a in analyses]
     opportunities = cast(
         "list[dict[str, Any]]",
-        client.table("opportunities")
+        client.table("opportunities_current")
         .select("id, budget_amount, region_restriction, bid_close_at")
         .in_("id", ids)
         .execute()

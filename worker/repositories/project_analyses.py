@@ -80,12 +80,18 @@ def get_pending_opportunities(
     section. Over-fetches candidates since some will already be up to date, then filters
     in Python: PostgREST can't easily express "column X != related row's column Y" as a
     single filter.
+
+    Reads from opportunities_current, not the raw opportunities table, so a superseded
+    or cancelled revision of a G2B notice thread (see
+    docs/DATA_PIPELINE.md#notice-thread-deduplication) never consumes an analysis slot -
+    Project Radar hides those rows entirely, so analyzing them would just waste an Ollama
+    call and a match_scores row nothing ever displays.
     """
     client = get_service_client()
 
     candidates = cast(
         "list[dict[str, Any]]",
-        client.table("opportunities")
+        client.table("opportunities_current")
         .select("id, title, organization, demand_organization, budget_amount, content_hash")
         .eq("category", category)
         .order("posted_at", desc=True)

@@ -3,10 +3,12 @@
 B2B SaaS MVP that helps IT/SI companies (5-50 employees) discover public-sector IT
 projects and government support programs, and track the public IT market.
 
-Status: **Phase 0-5 done** - repo/testing foundation, Supabase auth + company profile,
+Status: **Phase 0-6 done** - repo/testing foundation, Supabase auth + company profile,
 the G2B collector, Project Radar (browse/search collected bid announcements), Ollama-
 backed AI analysis (rule filter + structured extraction), and a rule-based Match Engine
-(Company Match settings + per-opportunity match score, no LLM). See `docs/MVP_SCOPE.md`
+(Company Match settings + per-opportunity match score, no LLM), and **CHALLENGE**
+(official contest collection, search/filter/detail, conservative AI-policy evidence).
+See `docs/CHALLENGES.md`, `docs/MVP_SCOPE.md`
 for the phase plan and `docs/VERIFICATION_REPORT.md` for what has actually been
 implemented and verified so far.
 
@@ -22,6 +24,10 @@ docs/         architecture, database, data pipeline, infra, testing, troubleshoo
 
 See `docs/ARCHITECTURE.md` for why web and worker are two independent runtimes that only
 share the Supabase database.
+
+CHALLENGE is feature-flagged with `FEATURE_CHALLENGE=true`. Apply the additive Phase 6
+migration, then see `docs/CHALLENGES.md` for collection, scheduling, policy semantics,
+manual commands, and limitations.
 
 ## Quick start
 

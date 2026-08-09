@@ -13,8 +13,6 @@ Verified against every title in fixtures/g2b/bid_list_servc_sample.json (real G2
 not synthetic) before this shipped - see worker/tests/test_rule_filter.py.
 """
 
-from __future__ import annotations
-
 Category = str  # "NON_IT" | "LIKELY_IT" | "UNKNOWN"
 
 _IT_KEYWORDS = [
@@ -56,6 +54,28 @@ _IT_KEYWORDS = [
     "모바일앱",
 ]
 
+# A narrow, explicit exception list - NOT a general word-boundary rule for "AI" and
+# friends. That was tried and reverted: tested live against 3,634 real collected titles,
+# a boundary heuristic ("AI" not fused to Hangul) fixed the one confirmed false positive
+# below but also flipped ~15 genuinely AI-relevant titles to non-IT ("의료AI", "제조AI
+# 서비스 개발", "비전AI 기반 지능형 문화관람 서비스 시범 구축", "Physical AI용 3D LiDAR",
+# "미래 AI반도체 기술개발 로드맵", ...) - formal 공공기관 titles fuse "AI" directly onto
+# real technology terms just as often as onto unrelated proper nouns, so the two cases
+# aren't structurally distinguishable by boundary alone. Given false negatives are the
+# worse failure mode here, only specific, confirmed non-tech phrases are excluded.
+_IT_KEYWORD_EXCEPTIONS = [
+    "AI타워",  # a building name at a 한국해양과학기술원-adjacent site, not AI technology -
+    # confirmed live: "AI타워ㆍ지하주차장 신축공사 폐기물처리용역" is a waste-disposal
+    # service for the building's construction, unrelated to AI.
+    "AIDed",  # a childcare/education-center program brand name ("에이드") in
+    # Yeoncheon-gun, not AI technology - confirmed live: "2026 연천 AIDed[에이드]
+    # 온동네돌봄・교육센터 제2권역[전곡초] 통학차량 임차용역" is a school shuttle rental
+    # service. A general "AI not fused to another Latin letter" rule was considered for
+    # this one too (would also catch it) and rejected the same way as the Hangul rule
+    # above: tested against the same real dataset, it also flips "AIDC" (a real "AI Data
+    # Center" industry term) to non-IT.
+]
+
 _NON_IT_KEYWORDS = [
     "수학여행",
     "현장체험학습",
@@ -81,7 +101,11 @@ _NON_IT_KEYWORDS = [
 
 
 def classify(title: str) -> Category:
-    if any(keyword in title for keyword in _IT_KEYWORDS):
+    stripped = title
+    for exception in _IT_KEYWORD_EXCEPTIONS:
+        stripped = stripped.replace(exception, "")
+
+    if any(keyword in stripped for keyword in _IT_KEYWORDS):
         return "LIKELY_IT"
     if any(keyword in title for keyword in _NON_IT_KEYWORDS):
         return "NON_IT"

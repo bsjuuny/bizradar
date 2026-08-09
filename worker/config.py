@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     bizinfo_api_key: str | None = None
     kstartup_api_key: str | None = None
 
+    feature_challenge: bool = True
+    challenge_collection_enabled: bool = True
+    challenge_collection_cron: str = "0 */6 * * *"
+    challenge_request_timeout: float = 15.0
+    challenge_max_retries: int = 3
+    challenge_ai_analysis_enabled: bool = False
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

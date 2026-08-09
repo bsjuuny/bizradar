@@ -3,18 +3,45 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const LINKS = [
+const ALL_LINKS = [
   { href: "/dashboard", label: "대시보드" },
-  { href: "/opportunities", label: "Project Radar" },
+  { href: "/opportunities", label: "Project Radar", hiddenWhilePending: true },
+  { href: "/support", label: "Support Radar", hiddenWhilePending: true },
+  { href: "/market", label: "시장 통계", adminOnly: true },
+  {
+    href: "/challenges",
+    label: "CHALLENGE",
+    featureFlag: "challenge" as const,
+    hiddenWhilePending: true,
+  },
   { href: "/settings", label: "설정" },
+  { href: "/admin", label: "회원 승인", adminOnly: true },
 ];
 
-export function NavLinks() {
+export function NavLinks({
+  challengeEnabled,
+  isAdmin,
+  approved,
+}: {
+  challengeEnabled: boolean;
+  isAdmin: boolean;
+  approved: boolean;
+}) {
   const pathname = usePathname();
+  const links = ALL_LINKS.filter((link) => {
+    if (link.adminOnly && !isAdmin) return false;
+    if (link.featureFlag === "challenge" && !challengeEnabled) return false;
+    // Hidden, not just gated server-side (apps/web/src/proxy.ts) - avoids dead-end
+    // clicks for a company still waiting on approval. Admins bypass the proxy gate
+    // entirely (see proxy.ts), so the nav must match or an admin would see a link
+    // missing that actually still works.
+    if (link.hiddenWhilePending && !approved && !isAdmin) return false;
+    return true;
+  });
 
   return (
-    <nav className="flex items-center gap-1">
-      {LINKS.map(({ href, label }) => {
+    <nav className="flex w-max items-center gap-1">
+      {links.map(({ href, label }) => {
         const active = pathname === href || pathname.startsWith(`${href}/`);
         return (
           <Link

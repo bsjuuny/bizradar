@@ -21,11 +21,13 @@ from pydantic import ValidationError
 
 from worker.ai.base import AIProvider, AIProviderError
 from worker.ai.schemas import ProjectExtraction
+from worker.challenges.models import ChallengeAIAnalysis
 from worker.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
 PROMPT_VERSION = "v4"  # v3 bounded array lengths; v4 dedupes list fields (schemas.py)
+CHALLENGE_PROMPT_VERSION = "challenge-v1"
 # A single call was observed at ~61s on CPU; leave generous headroom rather than
 # guessing at a "safe" lower number that might flake on a slower run.
 REQUEST_TIMEOUT_SECONDS = 300.0
@@ -73,6 +75,74 @@ _PROJECT_EXTRACTION_SCHEMA: dict[str, Any] = {
     },
     "required": ["project_type", "summary"],
 }
+
+_POLICY_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "status": {
+            "type": "string",
+            "enum": ["REQUIRED", "ALLOWED", "LIMITED", "PROHIBITED", "UNKNOWN"],
+        },
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "evidence": {"type": ["string", "null"]},
+        "source_section": {"type": ["string", "null"]},
+        "reason": {"type": ["string", "null"]},
+    },
+    "required": ["status", "confidence", "evidence"],
+}
+
+_CHALLENGE_ANALYSIS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "challenge_type": {
+            "type": "string",
+            "enum": [
+                "CONTEST",
+                "HACKATHON",
+                "AI_COMPETITION",
+                "DATA_COMPETITION",
+                "DEV_COMPETITION",
+                "IDEA_COMPETITION",
+                "STARTUP_COMPETITION",
+                "AWARD",
+                "PUBLIC_DATA_COMPETITION",
+                "OTHER",
+            ],
+        },
+        "ai_policy": _POLICY_SCHEMA,
+        "ai_coding": _POLICY_SCHEMA,
+        "generative_ai": _POLICY_SCHEMA,
+        "ai_image": _POLICY_SCHEMA,
+        "ai_video": _POLICY_SCHEMA,
+        "ai_audio": _POLICY_SCHEMA,
+        "external_ai_api": _POLICY_SCHEMA,
+        "prompt_disclosure_required": {"type": "boolean"},
+        "ai_usage_disclosure_required": {"type": "boolean"},
+    },
+    "required": [
+        "challenge_type",
+        "ai_policy",
+        "ai_coding",
+        "generative_ai",
+        "ai_image",
+        "ai_video",
+        "ai_audio",
+        "external_ai_api",
+        "prompt_disclosure_required",
+        "ai_usage_disclosure_required",
+    ],
+}
+
+
+def _json_object(raw: str) -> str:
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.removeprefix("```json").removeprefix("```")
+        text = text.removesuffix("```").strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end < start:
+        raise json.JSONDecodeError("No JSON object found", text, 0)
+    return text[start : end + 1]
 
 
 class OllamaProvider(AIProvider):
@@ -164,6 +234,33 @@ class OllamaProvider(AIProvider):
             f"{text}"
         )
         return self._extract_with_repair(prompt)
+
+    def _analyze_challenge_with_repair(self, prompt: str) -> ChallengeAIAnalysis:
+        raw = self._generate(prompt, _CHALLENGE_ANALYSIS_SCHEMA)
+        try:
+            return ChallengeAIAnalysis.model_validate_json(_json_object(raw))
+        except (ValidationError, json.JSONDecodeError) as first_error:
+            repair_prompt = (
+                f"{prompt}\n\n이전 응답이 스키마 검증에 실패했습니다: {first_error}. "
+                "설명 없이 올바른 JSON 객체만 다시 반환하세요."
+            )
+            raw_retry = self._generate(repair_prompt, _CHALLENGE_ANALYSIS_SCHEMA)
+            try:
+                return ChallengeAIAnalysis.model_validate_json(_json_object(raw_retry))
+            except (ValidationError, json.JSONDecodeError) as second_error:
+                raise AIProviderError(
+                    f"Challenge analysis failed validation twice: {second_error}"
+                ) from second_error
+
+    async def analyze_challenge(self, text: str) -> ChallengeAIAnalysis:
+        prompt = (
+            "다음 공모전 원문에서 명시적으로 확인되는 정보만 JSON으로 추출하세요. "
+            "AI 사용 규정이 없거나 애매하면 반드시 UNKNOWN으로 두고 evidence는 null로 하세요. "
+            "허용을 추측하지 마세요. evidence는 원문의 짧은 근거 문장을 그대로 사용하세요. "
+            "AI 전체, AI 코딩, 생성형 AI, 이미지, 영상, 음성, 외부 AI API를 각각 판정하세요.\n\n"
+            f"{text}"
+        )
+        return self._analyze_challenge_with_repair(prompt)
 
     async def classify_project(self, text: str) -> str:
         # Delegates to extract_project rather than a separate prompt: nothing in this

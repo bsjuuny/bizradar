@@ -85,7 +85,7 @@ def test_a_failed_row_is_always_pending_regardless_of_current_prompt_version(mon
 
     class _Client:
         def table(self, name: str):
-            return _Query([candidate]) if name == "opportunities" else _Query([existing])
+            return _Query([candidate]) if name == "opportunities_current" else _Query([existing])
 
     monkeypatch.setattr(project_analyses, "get_service_client", lambda: _Client())
 

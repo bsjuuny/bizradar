@@ -115,6 +115,10 @@ test("detail page shows AI analysis for an analyzed opportunity", async ({ page,
       content_hash: "e2e-test-hash",
       title: "E2E 테스트용 AI 챗봇 구축 용역",
       category: "LIKELY_IT",
+      // The list sorts by posted_at desc (nulls last) - without this, the seeded row
+      // sorts behind every real collected opportunity with a real date and falls off
+      // page 1 once enough real data has accumulated (found live: 3,600+ real rows).
+      posted_at: new Date().toISOString(),
       raw_payload: {},
     },
   });

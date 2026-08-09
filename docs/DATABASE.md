@@ -1,7 +1,8 @@
 # Database
 
-## Status: Phase 1-5 tables implemented and verified against the live project; the rest
-are NOT_IMPLEMENTED until their phase.
+## Status: Phase 1-5 tables + the K-Startup half of Phase 6's `support_programs`
+implemented and verified against the live project; the rest are NOT_IMPLEMENTED until
+their phase.
 
 - `20260807120000_phase1_company_profile.sql` + `20260807130000_phase1_grants.sql`:
   `technologies`, `companies`, `company_members`, `company_technologies`,
@@ -20,6 +21,23 @@ are NOT_IMPLEMENTED until their phase.
   `match_scores`, a starter `technologies` vocabulary. Verified live via
   `worker/jobs/match_job.py` against a real company profile + real analyzed
   opportunities.
+- `20260809000000_notice_thread_dedup.sql`: `opportunities.bid_ntce_no`/`bid_ntce_ord`/
+  `ntce_kind_nm` + the `opportunities_current` view. Verified live against the real
+  dataset (3,634 rows -> 3,063 after dedup) - see
+  `docs/DATA_PIPELINE.md#notice-thread-deduplication-implemented-2026-08-09`.
+- `20260809010000_market_stats_fields.sql`: `opportunities.industry_limited`/
+  `participation_limited`/`procurement_category`.
+  `20260809020000_refresh_opportunities_current_view.sql`: `CREATE OR REPLACE` on
+  `opportunities_current` so its `select o.*` picks up those new columns - see
+  `docs/DATA_PIPELINE.md#market-statistics-implemented-2026-08-09` for why that's a
+  separate migration, not automatic.
+- `20260809030000_company_approval_status.sql` + `20260809031000_fix_approval_status_grant.sql`:
+  `companies.approval_status` + the column-level grant fix - see this file's "Gotchas
+  hit implementing sign-up approval" section below.
+- `20260810000000_kstartup_support_programs.sql`: `support_programs`. Verified live via
+  `worker/collectors/kstartup.py` against the real K-Startup API + this project (500
+  real announcements collected, idempotent re-run confirmed) - see
+  `docs/DATA_PIPELINE.md#support-programs-k-startup-implemented-2026-08-10`.
 
 ## Migration workflow
 
@@ -39,7 +57,10 @@ Implemented (Phase 1):
   business type, founded year). Phase 5 added the Match Engine profile fields:
   `budget_min`/`budget_max` (nullable = no preference, treated as "flexible" not
   "unknown" - see `docs/DATA_PIPELINE.md`), `experience_years` (default 0),
-  `qualifications` (`text[]`, default `{}`).
+  `qualifications` (`text[]`, default `{}`). `approval_status`
+  (`PENDING`/`APPROVED`/`REJECTED`, default `APPROVED`) gates a new company to
+  `/dashboard` + `/settings` only until a BizRadar operator approves it
+  (`apps/web/src/proxy.ts`) - see `docs/PRIVACY.md` and the gotcha below.
 - `company_members` - links `auth.users` to `companies` (`user_id` is the primary key -
   a user belongs to at most one company for MVP scope, no invite flow).
 - `company_technologies` - join table for a company's declared tech stack.
@@ -54,7 +75,19 @@ Implemented (Phase 1):
   plus `gin_trgm_ops` trigram indexes on `title`/`organization` for substring search -
   see the Phase 3 gotcha below for why both exist. `category`
   (`NON_IT`/`LIKELY_IT`/`UNKNOWN`) is set by `worker/ai/rule_filter.py` at collection
-  time, not a separate job - see `docs/DATA_PIPELINE.md`.
+  time, not a separate job - see `docs/DATA_PIPELINE.md`. Also has `bid_ntce_no`/
+  `bid_ntce_ord`/`ntce_kind_nm` (G2B notice-thread identity, extracted from
+  `raw_payload`) - see `opportunities_current` below and
+  `docs/DATA_PIPELINE.md#notice-thread-deduplication-implemented-2026-08-09`. Also has
+  `industry_limited`/`participation_limited`/`procurement_category` (tri-state Y/N/not-
+  stated bidding-qualification fields, feed `/market`) - see
+  `docs/DATA_PIPELINE.md#market-statistics-implemented-2026-08-09`.
+- `opportunities_current` - a `security_invoker` view over `opportunities`, not a table:
+  the current (latest, non-cancelled) revision of each G2B notice thread. Every read path
+  that browses/analyzes/matches opportunities uses this, not the raw table, which keeps
+  every historical revision. RLS: inherits `opportunities`' policy via
+  `security_invoker`, plus an explicit `grant select ... to authenticated` (views get no
+  grants by default, same as tables - see the Phase 1 gotcha below).
 - `project_analyses` - AI output keyed to an opportunity 1:1 (`unique(opportunity_id)`):
   `status` (`PENDING`/`SUCCESS`/`FAILED`), `project_type`, `technologies`/
   `required_roles`/`requirements`/`risks` (jsonb), `summary`, `model`, `model_version`,
@@ -71,10 +104,21 @@ Implemented (Phase 1):
   only (not public like `opportunities`/`project_analyses` - a match score is specific
   to one company's fit, not general-purpose data). See
   `docs/DATA_PIPELINE.md#match-engine`.
+- `support_programs` - RAW/NORMALIZED K-Startup 사업공고 (`source` is always
+  `'kstartup'` - BizInfo lands separately later under the same table, not a new one).
+  `title`, `organization`, `department`, `supervising_type` (민간/공공기관/교육기관/
+  지자체), `category` (조달분류 아님, K-Startup's own `supt_biz_clsfc`), `region`,
+  `target`, `recruiting` (nullable Y/N), `application_start`/`application_end`,
+  `description`, `source_url`, plus `raw_payload` and `content_hash`. Unique on
+  `(source, external_id)`. `investment_linked` (TIPS/엔젤투자/etc, rule-filter
+  classification, default `false`) - see
+  `docs/DATA_PIPELINE.md#support-programs-k-startup-implemented-2026-08-10`. RLS: any
+  authenticated user can `select`; only `service_role` writes - same pattern as
+  `opportunities`.
 
 Planned (later phases, see `docs/MVP_SCOPE.md`):
 
-- `support_programs` - BizInfo/K-Startup normalized programs + eligibility status. (Phase 6)
+- BizInfo half of `support_programs` + eligibility status computation. (Phase 6, remainder)
 - `saved_opportunities`, `watch_conditions` - per-company user state. (Phase 8)
 
 ## Gotchas hit while implementing Phase 1 (see `docs/TROUBLESHOOTING.md` for full detail)
@@ -150,6 +194,31 @@ Planned (later phases, see `docs/MVP_SCOPE.md`):
   already-shipped form/column, Business Type matching uses keyword fuzzy-matching
   (`worker/matching/engine.py:BUSINESS_TYPE_KEYWORDS`) - a deliberate, documented
   trade-off, not an oversight.
+
+## Gotchas hit implementing sign-up approval (2026-08-09)
+
+- **Column-level `REVOKE` does not override an existing table-wide `GRANT`.** The first
+  attempt to lock down `companies.approval_status` was
+  `revoke update (approval_status) on companies from authenticated;` - this looked
+  correct and applied without error, but a live attack test (sign up a throwaway user,
+  PATCH their own company's `approval_status` via the anon key + their session token)
+  showed it did nothing: the self-approval succeeded (200, row actually changed).
+  Confirmed via `supabase db query --linked` against
+  `information_schema.column_privileges`: `authenticated` still had `UPDATE` on that
+  column. Root cause - the table-wide `grant update on companies to authenticated`
+  (Phase 1) already grants UPDATE on every column, present and future; a column-specific
+  `REVOKE` only removes an *explicit column-level* grant entry, and there wasn't one to
+  remove. Fix: `revoke update on companies from authenticated` (the whole table), then
+  re-`grant update (col1, col2, ...)` on only the columns that should stay writable,
+  explicitly excluding `approval_status`. Re-verified live after the fix: the same
+  attack now gets a 403, and a normal settings save (name/budget/etc.) still succeeds.
+  **Lesson: don't assume a `REVOKE` worked because it ran without error - verify against
+  `information_schema` and/or a real attack attempt, especially alongside an existing
+  table-wide `GRANT`.**
+- Since `authenticated` has zero write access to `approval_status` by design, approving a
+  company can only be done with `service_role` - the one deliberate, narrowly-scoped
+  exception to "the web app never holds `SUPABASE_SERVICE_ROLE_KEY`" (see
+  `docs/ARCHITECTURE.md` and `apps/web/src/lib/supabase/admin.ts`).
 
 ## RLS (must pass before Phase 1 is considered done)
 

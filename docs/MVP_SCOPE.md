@@ -38,8 +38,10 @@ flag it instead of building it.
 | 9 | Error handling + security |
 | 10 | Full regression + Railway readiness |
 
-Current status: **Phase 0-5 done** - repo/testing foundation, Supabase auth + company
-profile, the G2B collector, Project UI, Ollama-backed AI analysis, and the rule-based
-Match Engine (+ a Company Match Settings page to feed it real data). See
+Current status: **Phase 0-5 done, Phase 6 partial** - repo/testing foundation, Supabase
+auth + company profile, the G2B collector, Project UI, Ollama-backed AI analysis, and the
+rule-based Match Engine (+ a Company Match Settings page to feed it real data), plus the
+K-Startup half of Phase 6 (Support Radar - 정부지원사업, incl. TIPS-style investment-linked
+program detection). BizInfo (Phase 6's other half) is not yet built. See
 `docs/VERIFICATION_REPORT.md` for what has actually been run and passed vs. what is not
 yet implemented.

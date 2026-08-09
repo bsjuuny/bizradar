@@ -23,3 +23,31 @@ export function formatDateTime(iso: string | null | undefined): string {
     hour12: false,
   }).format(date);
 }
+
+export function formatDday(
+  iso: string | null | undefined,
+  now: Date = new Date(),
+): string {
+  if (!iso) return "일정 미정";
+  const deadline = new Date(iso);
+  if (Number.isNaN(deadline.getTime())) return "일정 미정";
+  const todayKey = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(now);
+  const deadlineKey = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(deadline);
+  const day = 86_400_000;
+  const diff = Math.round(
+    (Date.parse(`${deadlineKey}T00:00:00Z`) - Date.parse(`${todayKey}T00:00:00Z`)) / day,
+  );
+  if (diff < 0) return "마감";
+  if (diff === 0) return "D-Day";
+  return `D-${diff}`;
+}

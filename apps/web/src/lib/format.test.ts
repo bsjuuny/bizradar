@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatCurrencyKRW, formatDate, formatDateTime } from "./format";
+import { formatCurrencyKRW, formatDate, formatDateTime, formatDday } from "./format";
 
 describe("formatCurrencyKRW", () => {
   it("formats a number with thousands separators and 원 suffix", () => {
@@ -37,5 +37,20 @@ describe("formatDateTime", () => {
   it("returns an em dash for null or invalid input", () => {
     expect(formatDateTime(null)).toBe("—");
     expect(formatDateTime("not-a-date")).toBe("—");
+  });
+});
+
+describe("formatDday", () => {
+  const now = new Date("2026-08-07T03:00:00Z");
+
+  it("calculates a Seoul-calendar D-day", () => {
+    expect(formatDday("2026-08-17T14:59:59Z", now)).toBe("D-10");
+    expect(formatDday("2026-08-07T14:59:59Z", now)).toBe("D-Day");
+  });
+
+  it("handles closed, missing, and invalid deadlines", () => {
+    expect(formatDday("2026-08-06T14:59:59Z", now)).toBe("마감");
+    expect(formatDday(null, now)).toBe("일정 미정");
+    expect(formatDday("invalid", now)).toBe("일정 미정");
   });
 });

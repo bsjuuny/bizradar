@@ -200,3 +200,15 @@ duplication within the now-bounded array - an order-preserving dedupe
 `PROMPT_VERSION` whenever the schema or prompt text changes, so already-analyzed rows are
 picked up for re-analysis (`worker/repositories/project_analyses.py:get_pending_opportunities()`
 compares both `content_hash` and `prompt_version`).
+
+## A newly-added column doesn't show up in a view that already existed ("column ... does not exist")
+
+Seen live adding `industry_limited`/etc to `opportunities` for the Market Radar stats
+page: `opportunities_current` (a view doing `select o.*`) errored with "column
+opportunities_current.industry_limited does not exist" even though the column existed on
+the underlying table. Postgres resolves `o.*` against the table's schema at *view
+creation/replace time*, not at query time - `alter table ... add column` doesn't
+retroactively update a view defined before the column existed. Fix: `create or replace
+view` with the exact same query text - that forces Postgres to re-expand `o.*` against
+the current schema. Any future column added to a table that a view wraps with `select
+o.*`/`t.*` needs the same refresh, not just the `alter table`.

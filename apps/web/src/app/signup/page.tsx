@@ -53,6 +53,22 @@ export default function SignupPage() {
             className="rounded-lg border border-border bg-background px-3 py-2 text-sm"
           />
         </div>
+        <label htmlFor="privacy_consent" className="flex items-start gap-2 text-sm">
+          <input
+            id="privacy_consent"
+            name="privacy_consent"
+            type="checkbox"
+            required
+            className="mt-0.5 rounded border-border"
+          />
+          <span>
+            [필수]{" "}
+            <Link href="/privacy" target="_blank" className="underline">
+              개인정보 수집 및 이용
+            </Link>
+            에 동의합니다.
+          </span>
+        </label>
         {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
         <Button type="submit" disabled={pending}>
           {pending ? "가입 중..." : "회원가입"}

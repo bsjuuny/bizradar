@@ -67,6 +67,47 @@ Verified live end-to-end (2026-08-07): real API -> real `opportunities` table, K
 text intact, re-running the same window upserts in place (row count unchanged, only
 `updated_at` moves) - see `docs/VERIFICATION_REPORT.md`.
 
+## Notice-thread deduplication (implemented 2026-08-09)
+
+`(source, external_id)` uniqueness (below) stops the *same* G2B notice from being
+ingested twice, but doesn't stop the *same underlying procurement* from appearing as
+multiple rows - found live, browsing real collected data: a single 한국해양과학기술원
+project appeared as 7 rows, because G2B itself re-issues a **brand new bidNtceNo** each
+time an agency cancels and re-announces (재공고, linked back to the previous number via
+`befBidBbancNo`), and increments **bidNtceOrd under the same bidNtceNo** for corrections
+(변경공고) - both legitimate, distinct G2B records, not a collector bug.
+
+`worker/collectors/g2b.py:normalize()` now also extracts `bid_ntce_no`, `bid_ntce_ord`
+(int, not the raw zero-padded string), and `ntce_kind_nm` from `raw_payload` into their
+own `opportunities` columns. The `opportunities_current` view (`supabase/migrations`)
+shows only the current state of each notice thread: the row with the max `bid_ntce_ord`
+per `bid_ntce_no`, excluding threads whose latest revision is a cancellation
+(`ntce_kind_nm = '취소공고'`) - a cancelled thread's live successor, if any, is a
+different `bid_ntce_no` and already its own separate row. Rows with `bid_ntce_no` null
+(not yet backfilled, or a future non-G2B source) pass through unfiltered rather than
+being dropped.
+
+The web app (`apps/web/src/lib/opportunities.ts`) reads `opportunities_current`, not the
+raw table, for both the list and detail views, and `worker/repositories/
+project_analyses.py:get_pending_opportunities()` / `worker/repositories/
+match_scores.py:get_analyzed_opportunities()` do the same, so a superseded/cancelled
+revision never consumes an `analyze_job` Ollama call or a `match_job` cycle for a row
+Project Radar will never display. The raw `opportunities` table keeps every historical
+revision - nothing is deleted, only filtered at read time.
+
+Verified live: the 7-row 한국해양과학기술원 chain above collapsed to exactly 1 row (the
+still-open notice); across the full real dataset (3,634 rows at the time), 571 rows were
+superseded/cancelled revisions, leaving 3,063 current opportunities.
+
+A general word-boundary heuristic for the rule filter's "AI" keyword was tried in the
+same investigation (to fix "AI타워ㆍ지하주차장 신축공사 폐기물처리용역", a waste-disposal
+notice misclassified `LIKELY_IT` because "AI타워" is a building name) and reverted after
+testing against the same 3,634 real titles - it also flipped genuinely AI-relevant titles
+like "의료AI", "비전AI 기반 지능형 문화관람 서비스 시범 구축", and "Physical AI용 3D
+LiDAR..." to non-IT, which is the worse failure mode this filter is deliberately biased
+against (see `worker/ai/rule_filter.py`'s module docstring). The shipped fix is a narrow,
+explicit exception for the one confirmed phrase instead.
+
 ## Idempotency
 
 Unique key: `(source, external_id)` - for G2B, `{bidNtceNo}-{bidNtceOrd}`. Re-running a
@@ -203,6 +244,95 @@ caught them - see `docs/DATABASE.md`'s Phase 5 gotchas for full detail):
   fed directly into this phase's schema design - fixed with `maxItems` constraints and an
   order-preserving dedupe validator on `ProjectExtraction` (`worker/ai/schemas.py`,
   `PROMPT_VERSION` v4).
+
+## Market statistics (implemented 2026-08-09)
+
+`apps/web/src/app/(app)/market/page.tsx` ("시장 통계") shows aggregate bidding-
+qualification stats over IT-classified (`category = LIKELY_IT`) *current* opportunities
+(`opportunities_current` - see notice-thread deduplication above) - not a "Market Radar"
+rebuild (that's still Phase 7 scope: budget/agency trend analysis over time), just
+입찰자격/투찰제한 breakdowns the user asked for directly.
+
+`worker/collectors/g2b.py:normalize()` extracts three more fields into their own
+`opportunities` columns (`20260809010000_market_stats_fields.sql`), same RAW ->
+NORMALIZED pattern as everything else here - the web app never reads `raw_payload` JSON
+paths directly:
+
+- `industry_limited` (from `indstrytyLmtYn`) - 업종제한 여부.
+- `participation_limited` (from `bidPrtcptLmtYn`) - 참가제한 여부.
+- `procurement_category` (from `pubPrcrmntClsfcNm`) - 조달분류명, e.g. "정보시스템개발서비스".
+
+All three are tri-state (`true`/`false`/`null`), not boolean - G2B sometimes sends an
+empty string rather than omitting the field, which means "not stated" and must not be
+silently treated as "no restriction" (`false`). `apps/web/src/lib/market.ts` reports an
+explicit "공고에 명시 안 됨" bucket rather than folding unknowns into "제한 없음".
+
+지역제한 reuses the `region_restriction` column from Phase 2 (already normalized then).
+필수 자격/인증 and 요구 경력 come from `project_analyses.required_qualifications` /
+`min_experience_years` (Phase 5, AI-extracted) - so those two breakdowns only cover the
+subset of IT opportunities that have a `SUCCESS` analysis, which the page states
+explicitly ("AI 분석이 완료된 N건 중...") rather than implying full coverage.
+
+Live-verified against the real dataset (2026-08-09, 380 current LIKELY_IT
+opportunities): 업종제한 70% Y, 참가제한 1%, 지역제한 2%; top 조달분류 "정보시스템개발
+서비스" (89건); top 자격/인증 "정보보호관리체계 인증" (16건) and "SW사업자 등록" (15건)
+among the 66 analyzed.
+
+**Gotcha hit shipping this**: `opportunities_current` is a view (`select o.*`) - Postgres
+resolves `o.*` against the table's schema at *view creation/replace time*, not at query
+time. Adding the three columns above didn't make them appear in the view; the page
+errored live with "column opportunities_current.industry_limited does not exist" until a
+follow-up migration (`20260809020000_refresh_opportunities_current_view.sql`) reissued
+`CREATE OR REPLACE VIEW` with the identical query text, which forces Postgres to
+re-expand `o.*`. Any future column added to `opportunities` that the view should expose
+needs the same `CREATE OR REPLACE VIEW` refresh, not just the `alter table`.
+
+## Support programs (K-Startup, implemented 2026-08-10)
+
+`worker/collectors/kstartup.py:KStartupCollector` - Phase 6, K-Startup half only
+(BizInfo lands separately later; `support_programs.source` already distinguishes them so
+the table doesn't need to change shape when it does). Same RAW/NORMALIZED/idempotent-
+upsert template as G2B (`worker/collectors/base.py:BaseCollector`).
+
+```
+https://apis.data.go.kr/B552735/kisedKstartupService01/getAnnouncementInformation01
+```
+
+Needs its own data.go.kr 활용신청, separate from G2B's, even though the underlying
+account service key value is the same once approved - confirmed live: G2B's key against
+this endpoint returned `SERVICE_KEY_IS_NOT_REGISTERED_ERROR` until the user applied for
+this specific dataset.
+
+No confirmed working server-side date-range or "currently recruiting" filter param (a
+guessed `cond[rcrt_prgs_yn]=Y` returned an undocumented `{"code":0,"msg":"정상"}` shape
+instead of the normal envelope - not pursued further). Results are stably sorted
+newest-first by `pbanc_sn` across pages (verified live: page 1 and page 2 are contiguous
+with no gaps/overlaps), so `collect()` just walks pages from the start every run, bounded
+by `max_records` (500 by default) - upserting on `(source, external_id)` makes
+re-fetching already-seen recent announcements harmless, same idempotency principle as
+G2B. Verified live end-to-end (2026-08-10): 500 real announcements collected and
+persisted, re-running immediately upserted in place (still 500 rows, no duplicates).
+
+**Investment-linked classification**: `worker/ai/investment_filter.py:is_investment_linked()`
+flags TIPS/엔젤투자/VC-adjacent programs via keyword matching over title + description,
+same rule-filter approach as `worker/ai/rule_filter.py`'s G2B category - stored as
+`support_programs.investment_linked`. Deliberately excludes short 2-3 letter Latin
+acronyms ("VC", "IR") from the keyword list: `rule_filter.py`'s "AI" false positives
+(AI타워, AIDed) already proved that class of keyword is unsafe as a plain substring
+match, so only distinctive multi-syllable Korean terms and unambiguous phrases are used.
+Verified against 100 real collected announcements before shipping: 10 matched, all
+genuinely investment-related (including one caught only via the description text, not
+the title - "AI・로봇 참가 모집" doesn't mention investment, but its description explicitly
+describes 투자유치 support).
+
+**Gotcha hit shipping the web list**: sorting `/support` by `application_end` ascending
+alone put the *most expired* programs first (an old, long-past deadline sorts
+chronologically "smallest"), not the soonest-still-open ones - found live, every row
+showed "마감" (closed). Fixed by sorting `recruiting` (the API's own `rcrt_prgs_yn` flag)
+descending first, then `application_end` ascending within that. Known residual
+imperfection: the source's `recruiting` flag occasionally lags its own `application_end`
+date (real upstream data staleness, not something to correct client-side by overriding
+the organization's own stated status).
 
 ## Support eligibility
 

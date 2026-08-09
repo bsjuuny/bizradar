@@ -49,6 +49,12 @@ export async function createCompany(
     region,
     business_type: businessType,
     founded_year: foundedYear,
+    // New companies start PENDING and are gated to /dashboard + /settings
+    // (apps/web/src/proxy.ts) until a BizRadar operator approves them - see
+    // docs/PRIVACY.md and the approval_status migration. The column default is
+    // 'APPROVED' (so pre-existing companies aren't retroactively locked out); PENDING
+    // only applies to companies created from here on.
+    approval_status: "PENDING",
   });
 
   if (companyError) {

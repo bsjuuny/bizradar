@@ -37,5 +37,11 @@ def upsert_opportunity(normalized: G2BNormalizedOpportunity) -> None:
         "open_at": normalized.open_at.isoformat() if normalized.open_at else None,
         "source_url": normalized.source_url,
         "raw_payload": normalized.raw_payload,
+        "bid_ntce_no": normalized.bid_ntce_no,
+        "bid_ntce_ord": normalized.bid_ntce_ord,
+        "ntce_kind_nm": normalized.ntce_kind_nm,
+        "industry_limited": normalized.industry_limited,
+        "participation_limited": normalized.participation_limited,
+        "procurement_category": normalized.procurement_category,
     }
     client.table("opportunities").upsert(row, on_conflict="source,external_id").execute()

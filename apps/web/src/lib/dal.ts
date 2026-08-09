@@ -3,6 +3,7 @@ import "server-only";
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { isPlatformAdmin } from "@/lib/features";
 
 export const getUser = cache(async () => {
   const supabase = await createClient();
@@ -33,12 +34,13 @@ export type CompanyMembership = {
     budget_max: number | null;
     experience_years: number;
     qualifications: string[];
+    approval_status: "PENDING" | "APPROVED" | "REJECTED";
   };
 };
 
 const COMPANY_COLUMNS =
   "id, name, size_band, industry, region, business_type, founded_year, " +
-  "budget_min, budget_max, experience_years, qualifications";
+  "budget_min, budget_max, experience_years, qualifications, approval_status";
 
 export const getCompany = cache(async (): Promise<CompanyMembership | null> => {
   const user = await getUser();
@@ -66,4 +68,14 @@ export async function requireCompany() {
   const company = await getCompany();
   if (!company) redirect("/onboarding");
   return company;
+}
+
+// Gates pages, not just the nav link (which only hides the entry point) - a non-admin
+// hitting /market's URL directly must not see it either. See
+// apps/web/src/lib/features.ts:isPlatformAdmin for why this is a static email allowlist,
+// not a company_members role.
+export async function requireAdmin() {
+  const user = await requireUser();
+  if (!isPlatformAdmin(user.email)) redirect("/dashboard");
+  return user;
 }

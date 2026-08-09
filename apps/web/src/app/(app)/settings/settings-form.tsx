@@ -22,9 +22,13 @@ export function SettingsForm({
   const [state, formAction, pending] = useActionState(updateSettings, undefined);
 
   return (
-    <form action={formAction} className="flex flex-col gap-8">
-      <section className="flex flex-col gap-4">
-        <h2 className="text-sm font-semibold text-muted-foreground">회사 정보</h2>
+    <form action={formAction} className="flex flex-col gap-6">
+      <section className="flex flex-col gap-5 rounded-2xl border border-border bg-card p-5 sm:p-6">
+        <div>
+          <p className="text-xs font-medium tracking-wide text-muted-foreground">기본 프로필</p>
+          <h2 className="mt-1 text-lg font-semibold">회사 정보</h2>
+          <p className="mt-1 text-sm text-muted-foreground">기본 회사 정보를 입력하면 추천 결과의 정확도가 높아집니다.</p>
+        </div>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="flex flex-col gap-1">
             <label htmlFor="name" className="text-sm font-medium">
@@ -96,10 +100,11 @@ export function SettingsForm({
         </div>
       </section>
 
-      <section className="flex flex-col gap-4">
+      <section className="flex flex-col gap-5 rounded-2xl border border-border bg-card p-5 sm:p-6">
         <div>
-          <h2 className="text-sm font-semibold text-muted-foreground">Company Match 프로필</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="text-xs font-medium tracking-wide text-muted-foreground">매칭 프로필</p>
+          <h2 className="mt-1 text-lg font-semibold">Company Match 프로필</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
             Project Radar의 매칭 점수 계산에 사용됩니다. 비워두면 해당 항목은 조건 없음으로
             처리됩니다.
           </p>
@@ -160,9 +165,9 @@ export function SettingsForm({
 
         <div className="flex flex-col gap-2">
           <span className="text-sm font-medium">기술 스택</span>
-          <div className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-lg border border-border p-4 sm:grid-cols-3 md:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 rounded-xl border border-border bg-muted/20 p-3 sm:grid-cols-3 lg:grid-cols-5">
             {technologies.map((tech) => (
-              <label key={tech.id} className="flex items-center gap-2 text-sm">
+              <label key={tech.id} className="flex cursor-pointer items-center gap-2 rounded-lg border border-transparent px-3 py-2 text-sm transition hover:border-border hover:bg-background has-checked:border-foreground/20 has-checked:bg-background">
                 <input
                   type="checkbox"
                   name="technology_ids"
@@ -177,12 +182,16 @@ export function SettingsForm({
         </div>
       </section>
 
-      {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
-      {state?.success && <p className="text-sm text-emerald-600">저장되었습니다.</p>}
-
-      <Button type="submit" disabled={pending} className="w-fit">
-        {pending ? "저장 중..." : "저장"}
-      </Button>
+      <div className="sticky bottom-4 flex items-center justify-between gap-4 rounded-xl border border-border bg-background/95 p-3 shadow-lg backdrop-blur">
+        <div aria-live="polite">
+          {state?.error && <p className="text-sm text-destructive">{state.error}</p>}
+          {state?.success && <p className="text-sm text-emerald-600">저장되었습니다.</p>}
+          {!state && <p className="text-sm text-muted-foreground">변경한 내용은 저장 버튼을 눌러 반영하세요.</p>}
+        </div>
+        <Button type="submit" size="lg" disabled={pending} className="min-w-24">
+          {pending ? "저장 중..." : "변경사항 저장"}
+        </Button>
+      </div>
     </form>
   );
 }

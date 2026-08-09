@@ -47,6 +47,17 @@ class G2BNormalizedOpportunity(BaseModel):
     source_url: str | None = None
     content_hash: str
     raw_payload: dict[str, Any]
+    # Notice-thread identity, used to show only the current revision of a G2B notice
+    # (see docs/DATA_PIPELINE.md#notice-thread-deduplication) - not derived from
+    # external_id at query time so the web app never has to know G2B's ID format.
+    bid_ntce_no: str | None = None
+    bid_ntce_ord: int | None = None
+    ntce_kind_nm: str | None = None
+    # Bidding-qualification fields for Market Radar-style statistics - see
+    # docs/DATA_PIPELINE.md#market-statistics.
+    industry_limited: bool | None = None
+    participation_limited: bool | None = None
+    procurement_category: str | None = None
 
 
 def _parse_amount(value: Any) -> float | None:
@@ -56,6 +67,25 @@ def _parse_amount(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _parse_int(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_yn(value: Any) -> bool | None:
+    # G2B's Y/N flag fields are sometimes an empty string rather than absent - that's
+    # "not stated", not "N", so it maps to None (unknown), not False.
+    if value == "Y":
+        return True
+    if value == "N":
+        return False
+    return None
 
 
 def _parse_datetime(value: Any) -> datetime | None:
@@ -247,6 +277,12 @@ class G2BCollector(BaseCollector[G2BNormalizedOpportunity]):
             source_url=item.get("bidNtceUrl") or item.get("bidNtceDtlUrl") or None,
             content_hash=compute_content_hash(item),
             raw_payload=item,
+            bid_ntce_no=item.get("bidNtceNo") or None,
+            bid_ntce_ord=_parse_int(item.get("bidNtceOrd")),
+            ntce_kind_nm=item.get("ntceKindNm") or None,
+            industry_limited=_parse_yn(item.get("indstrytyLmtYn")),
+            participation_limited=_parse_yn(item.get("bidPrtcptLmtYn")),
+            procurement_category=item.get("pubPrcrmntClsfcNm") or None,
         )
 
     def validate(self, normalized: G2BNormalizedOpportunity) -> bool:

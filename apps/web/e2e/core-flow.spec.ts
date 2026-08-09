@@ -66,6 +66,7 @@ test("signup calls Supabase Auth and surfaces the result", async ({ page, reques
   await page.goto("/signup");
   await page.getByLabel("이메일").fill(signupEmail);
   await page.getByLabel("비밀번호").fill(`Test-${randomUUID()}!A1`);
+  await page.getByLabel(/개인정보 수집 및 이용/).check();
   await page.getByRole("button", { name: "회원가입" }).click();
 
   // Two legitimate outcomes, both proving the round-trip to Supabase Auth happened

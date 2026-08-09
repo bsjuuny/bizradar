@@ -3,7 +3,16 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/dal";
 
-export const PAGE_SIZE = 20;
+export const DEFAULT_PAGE_SIZE = 20;
+export const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
+
+// Only columns actually shown in the list table (apps/web/src/app/(app)/opportunities/
+// page.tsx) are sortable - bid_close_at isn't a column there, so it's left out rather
+// than offering a sort control for a value the table doesn't display.
+export const SORT_FIELDS = ["title", "organization", "posted_at", "budget_amount"] as const;
+export type SortField = (typeof SORT_FIELDS)[number];
+export const DEFAULT_SORT_FIELD: SortField = "posted_at";
+export const DEFAULT_SORT_DIR = "desc" as const;
 
 export type Category = "NON_IT" | "LIKELY_IT" | "UNKNOWN";
 
@@ -60,6 +69,8 @@ export type OpportunityPage = {
   total: number;
   page: number;
   pageSize: number;
+  sort: SortField;
+  dir: "asc" | "desc";
 };
 
 function escapeLikeTerm(term: string): string {
@@ -95,24 +106,42 @@ export async function getOpportunities({
   page = 1,
   q,
   category,
+  pageSize,
+  sort,
+  dir,
 }: {
   page?: number;
   q?: string;
   category?: Category;
+  pageSize?: number;
+  sort?: string;
+  dir?: string;
 } = {}): Promise<OpportunityPage> {
   await requireUser();
   const supabase = await createClient();
 
+  // Only an allow-listed set of page sizes is accepted (not an arbitrary user-supplied
+  // number) - otherwise a crafted URL could request an unbounded range.
+  const safePageSize = PAGE_SIZE_OPTIONS.includes(pageSize as (typeof PAGE_SIZE_OPTIONS)[number])
+    ? (pageSize as (typeof PAGE_SIZE_OPTIONS)[number])
+    : DEFAULT_PAGE_SIZE;
   const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
-  const from = (safePage - 1) * PAGE_SIZE;
-  const to = from + PAGE_SIZE - 1;
+  const from = (safePage - 1) * safePageSize;
+  const to = from + safePageSize - 1;
+  const safeSort = SORT_FIELDS.includes(sort as SortField) ? (sort as SortField) : DEFAULT_SORT_FIELD;
+  const safeDir = dir === "asc" ? "asc" : DEFAULT_SORT_DIR;
 
+  // opportunities_current (supabase/migrations) shows only the latest, non-cancelled
+  // revision of each G2B notice thread - see docs/DATA_PIPELINE.md#notice-thread-
+  // deduplication. Browsing/search/pagination all go through it instead of the raw
+  // opportunities table, which keeps every historical revision.
   let query = supabase
-    .from("opportunities")
+    .from("opportunities_current")
     .select("id, title, category, organization, budget_amount, posted_at, bid_close_at", {
       count: "exact",
     })
-    .order("posted_at", { ascending: false, nullsFirst: false })
+    .order(safeSort, { ascending: safeDir === "asc", nullsFirst: false })
+    .order("id", { ascending: true }) // tiebreaker for a stable order across pages
     .range(from, to);
 
   if (category) {
@@ -138,7 +167,9 @@ export async function getOpportunities({
     items: items.map((item) => ({ ...item, matchScore: matchTotals.get(item.id) ?? null })),
     total: count ?? 0,
     page: safePage,
-    pageSize: PAGE_SIZE,
+    pageSize: safePageSize,
+    sort: safeSort,
+    dir: safeDir,
   };
 }
 
