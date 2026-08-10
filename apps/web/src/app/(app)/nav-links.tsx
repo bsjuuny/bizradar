@@ -4,16 +4,16 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const ALL_LINKS = [
-  { href: "/dashboard", label: "대시보드" },
-  { href: "/opportunities", label: "Project Radar", hiddenWhilePending: true },
-  { href: "/support", label: "Support Radar", hiddenWhilePending: true },
-  { href: "/market", label: "시장 통계", adminOnly: true },
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/opportunities", label: "Project", hiddenWhilePending: true },
+  { href: "/support", label: "Support", hiddenWhilePending: true },
   {
     href: "/challenges",
     label: "CHALLENGE",
     featureFlag: "challenge" as const,
     hiddenWhilePending: true,
   },
+  { href: "/market", label: "시장 통계", adminOnly: true },
   { href: "/settings", label: "설정" },
   { href: "/admin", label: "회원 승인", adminOnly: true },
 ];
