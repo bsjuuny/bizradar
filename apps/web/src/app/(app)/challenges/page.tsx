@@ -147,7 +147,7 @@ export default async function ChallengesPage({
             <article key={challenge.id} className="flex flex-col gap-4 rounded-xl border border-border bg-card p-5 transition hover:-translate-y-0.5 hover:shadow-sm last:odd:xl:col-span-2">
               <div className="flex flex-wrap gap-2"><TypeBadge type={challenge.challenge_type} /><StatusBadge status={challenge.status} /><PolicyBadge policy={challenge.ai_policy} /></div>
               <div>
-                <Link href={`/challenges/${challenge.id}`} className="text-lg font-semibold text-balance hover:underline">{challenge.title}</Link>
+                <Link href={`/challenges/${challenge.id}`} className="text-lg font-semibold text-balance visited:text-muted-foreground hover:underline">{challenge.title}</Link>
                 <p className="mt-1 text-sm text-muted-foreground">{challenge.organizer ?? "주최기관 미확인"}</p>
               </div>
               <dl className="grid grid-cols-2 gap-3 text-sm">

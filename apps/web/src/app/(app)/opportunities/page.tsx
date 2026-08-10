@@ -255,7 +255,7 @@ export default async function OpportunitiesPage({
                             ? `/opportunities/${item.id}?from=${encodeURIComponent(currentListQuery)}`
                             : `/opportunities/${item.id}`
                         }
-                        className="hover:underline"
+                        className="visited:text-muted-foreground hover:underline"
                       >
                         {item.title}
                       </Link>

@@ -154,7 +154,10 @@ export default async function SupportPage({
                     className="border-b border-border last:border-0 hover:bg-muted/30"
                   >
                     <td className="max-w-sm px-4 py-3">
-                      <Link href={`/support/${item.id}`} className="hover:underline">
+                      <Link
+                        href={`/support/${item.id}`}
+                        className="visited:text-muted-foreground hover:underline"
+                      >
                         {item.title}
                       </Link>
                     </td>

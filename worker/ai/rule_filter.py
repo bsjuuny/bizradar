@@ -52,6 +52,8 @@ _IT_KEYWORDS = [
     "정보시스템",
     "앱개발",
     "모바일앱",
+    "GIS",
+    "정보보호",
 ]
 
 # A narrow, explicit exception list - NOT a general word-boundary rule for "AI" and
@@ -74,6 +76,30 @@ _IT_KEYWORD_EXCEPTIONS = [
     # this one too (would also catch it) and rejected the same way as the Hangul rule
     # above: tested against the same real dataset, it also flips "AIDC" (a real "AI Data
     # Center" industry term) to non-IT.
+    "AI·디지털 사회 대국민 인식조사",  # an academic 대국민 인식조사 (public perception
+    # survey) research service about AI/digital society as a *topic* - not a system being
+    # built. Confirmed live (id f18403b6): the title is exactly this phrase, no IT
+    # deliverable involved. Kept as an exact-phrase exception rather than a general
+    # "인식조사" non-IT rule since only this one confirmed case has been seen so far -
+    # a survey/analysis *system* genuinely being built could plausibly also use this word.
+    "GIST",  # 광주과학기술원 (Gwangju Institute of Science and Technology) and, as a
+    # substring, its sister institute "DGIST" (대구경북과학기술원) - both university names
+    # that happen to contain the "GIS" keyword added below. Confirmed live: "2026년도 GIST
+    # 딥데크 창업도약(Scale-up) 투자연계 프로그램" is a startup investment program, and
+    # "DGIST 산업AX혁신허브 조성사업 설계 용역" is a research-hub design contract - neither
+    # is about geographic information systems.
+    "보안 및 미화",  # a bundled building-security-guard + cleaning service, not
+    # information security - confirmed live: "트라이보울 보안 및 미화 용역" (트라이보울 is a
+    # cultural-complex building in Songdo) is facility management, the same category as
+    # "경비용역"/"시설관리" already in the non-IT list below, just phrased with "보안"
+    # instead of "경비".
+    "인문도시네트워크",  # "세계인문도시네트워크(WHCN)" - a policy/cultural alliance of
+    # cities, not a computer network. Confirmed live: "｢세계인문도시네트워크(WHCN) 총회｣
+    # 운영 용역 입찰공고" is a conference-operations service.
+    "산학협력 네트워크",  # an industry-academia collaboration alliance, not a computer
+    # network - confirmed live: "참여기업 발굴 및 산학협력 네트워크 확대 용역".
+    "산학연 네트워크",  # same pattern as "산학협력 네트워크" above, confirmed live in a
+    # separate title: "기후변화 대응 산학연 네트워크 구축 및 운영을 통한 정책 발굴 연구".
 ]
 
 _NON_IT_KEYWORDS = [
