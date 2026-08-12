@@ -100,6 +100,10 @@ _IT_KEYWORD_EXCEPTIONS = [
     # network - confirmed live: "참여기업 발굴 및 산학협력 네트워크 확대 용역".
     "산학연 네트워크",  # same pattern as "산학협력 네트워크" above, confirmed live in a
     # separate title: "기후변화 대응 산학연 네트워크 구축 및 운영을 통한 정책 발굴 연구".
+    "정보화 화장실",  # a school-facilities naming convention for a renovated/modernized
+    # restroom, not an information system - confirmed live (id 7c877ae3): "서울동의초
+    # 교사동 및 정보화 화장실 개선 전기공사 재해예방기술지도용역" is a disaster-prevention
+    # technical guidance service for electrical construction work, unrelated to IT.
 ]
 
 _NON_IT_KEYWORDS = [

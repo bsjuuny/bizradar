@@ -157,3 +157,12 @@ def test_genuine_computer_network_titles_stay_likely_it():
     ]
     for title in titles:
         assert classify(title) == "LIKELY_IT", title
+
+
+def test_renovated_restroom_named_information_is_not_likely_it():
+    # Real live example (user-reported, id 7c877ae3): "정보화 화장실" is a school-
+    # facilities naming convention for a renovated restroom, not an information system -
+    # the notice is a disaster-prevention technical guidance service for electrical
+    # construction work.
+    title = "서울동의초 교사동 및 정보화 화장실 개선 전기공사 재해예방기술지도용역"
+    assert classify(title) == "UNKNOWN"
