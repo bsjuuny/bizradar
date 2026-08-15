@@ -10,7 +10,7 @@ Local PC -> PM2 -> Python worker -> Public APIs (G2B / BizInfo / K-Startup) -> O
 The web app and the worker never call each other directly. They only share the Supabase
 database. The worker writes analysis results; the web app reads them.
 
-**Why:** Ollama runs locally (`qwen3:8b`, no GPU hosting cost). Railway must never call
+**Why:** Ollama runs locally (`qwen3.5:9b`, no GPU hosting cost). Railway must never call
 Ollama, and a local Ollama outage must never become a Railway incident. See
 `/api/health` in `docs/INFRASTRUCTURE.md` - it does not check Ollama for this reason.
 

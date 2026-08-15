@@ -31,7 +31,7 @@ the subclass method signature.
 
 Confirmed during Phase 0 environment check: `ollama` was not found on this machine.
 Phase 4 (Ollama + Structured Analysis) cannot be implemented or tested until it's
-installed and `qwen3:8b` is pulled. Everything else in the MVP is independent of this.
+installed and `qwen3.5:9b` is pulled. Everything else in the MVP is independent of this.
 
 ## `INSERT` into `companies` fails with "new row violates row-level security policy" even
 ## though the INSERT policy is `with check (true)`

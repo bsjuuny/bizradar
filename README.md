@@ -66,8 +66,8 @@ pm2 start ecosystem.config.cjs
 
 This starts `g2b-collect` (hourly - see `docs/DATA_PIPELINE.md` for the G2B API's two
 non-obvious gotchas before touching `worker/collectors/g2b.py`), `analyze` (every 10
-minutes, batches of 5 - needs a local Ollama running with `qwen3:8b` pulled via
-`ollama pull qwen3:8b`, otherwise it logs a failure and skips itself each run, G2B
+minutes, batches of 5 - needs a local Ollama running with `qwen3.5:9b` pulled via
+`ollama pull qwen3.5:9b`, otherwise it logs a failure and skips itself each run, G2B
 collection is unaffected), and `match` (every 15 minutes, no external dependency -
 recomputes every company x analyzed-opportunity pair, see
 `docs/DATA_PIPELINE.md#match-engine-implemented-phase-5-rule-based-no-llm`).

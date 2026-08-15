@@ -14,7 +14,7 @@ class Settings(BaseSettings):
     data_mode: Literal["mock", "live"] = "mock"
 
     ollama_base_url: str = "http://127.0.0.1:11434"
-    ollama_model: str = "qwen3:8b"
+    ollama_model: str = "qwen3.5:9b"
 
     supabase_url: str | None = None
     supabase_service_role_key: str | None = None

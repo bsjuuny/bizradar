@@ -6,7 +6,7 @@ def test_defaults_to_mock_mode_and_local_ollama():
 
     assert settings.data_mode == "mock"
     assert settings.ollama_base_url == "http://127.0.0.1:11434"
-    assert settings.ollama_model == "qwen3:8b"
+    assert settings.ollama_model == "qwen3.5:9b"
     assert settings.supabase_url is None
 
 
