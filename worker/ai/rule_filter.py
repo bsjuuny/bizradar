@@ -104,6 +104,36 @@ _IT_KEYWORD_EXCEPTIONS = [
     # restroom, not an information system - confirmed live (id 7c877ae3): "서울동의초
     # 교사동 및 정보화 화장실 개선 전기공사 재해예방기술지도용역" is a disaster-prevention
     # technical guidance service for electrical construction work, unrelated to IT.
+    "자동파종 시스템",  # "시스템" fused onto a mechanical seed-sowing rig, not a computer
+    # system - confirmed live: "잘피종자 신속조성용 기계식 자동파종 시스템 제작 용역(전자
+    # 수의시담)" is a mechanical device for seagrass-seed propagation, unrelated to IT.
+    "보안등",  # a street/security light ("가로등"과 같은 조명 설비), not information
+    # security - "보안" fuses onto "등" (lamp) in routine municipal electrical/lighting
+    # contracts like "가로등·보안등 교체공사", unrelated to "보안" as in infosec.
+    "플랫폼스크린도어",  # a subway Platform Screen Door - physical safety barrier
+    # installation/maintenance work, not a software platform. "플랫폼" here means a train
+    # station platform, the everyday sense of the word, not a tech platform.
+    "정보화마을",  # "정보화마을" is a fixed brand name from a 2001-era rural-development
+    # program (특산물 판매·지역축제 운영 용역 등), not an information system being built -
+    # "정보화" fuses onto the program's name, not a description of IT work.
+    "대전산성초",  # the school name contains "전산" only across the word boundary
+    # 대[전산]성초. Confirmed live (id 2f54d3ef): the notice is for supervising solar-
+    # panel electrical work at three schools, not for an IT system.
+    "안전산업",  # the industry term contains "전산" only across 안전 + 산업. Confirmed
+    # live (id 2f780151): "안전산업박람회 전시관 설치 용역" is exhibition installation,
+    # not computer work. A separate real IT keyword elsewhere in the title still wins.
+    "전산편집",  # exam-paper editing/illustration services, not system development -
+    # confirmed live in both teacher-employment and CSAT exam notices.
+    "전산출력",  # printing, enclosing, and mailing giro forms, not an IT deliverable -
+    # confirmed live (id 110baf78) with procurement category 우편발송서비스.
+    "항공보안",  # physical aviation-security policy/planning, not information security -
+    # confirmed live (id 5e6032e0): a five-year aviation-security master-plan study.
+    "첨단보안협동조합",  # an organization name in a marketing/keyword-advertising
+    # contract (id 9c9f16d6), not a cybersecurity deliverable.
+    "데이터보안·활용융합분야 CO-SHOW",  # the topic/brand of an event-planning contract,
+    # not implementation of data-security software (live original + re-notice pair).
+    "농식품 분야 글로벌 R&D 전략 수립 및 네트워크",  # a research/collaboration network,
+    # not a computer network (id 8face869, procurement category 기타연구조사서비스).
 ]
 
 _NON_IT_KEYWORDS = [

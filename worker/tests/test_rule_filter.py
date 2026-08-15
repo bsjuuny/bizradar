@@ -166,3 +166,81 @@ def test_renovated_restroom_named_information_is_not_likely_it():
     # construction work.
     title = "서울동의초 교사동 및 정보화 화장실 개선 전기공사 재해예방기술지도용역"
     assert classify(title) == "UNKNOWN"
+
+
+def test_mechanical_seeding_system_is_not_likely_it():
+    # Real live example (user-reported): "자동파종 시스템" here is a mechanical seed-sowing
+    # rig for seagrass restoration, not a computer system.
+    title = "잘피종자 신속조성용 기계식 자동파종 시스템 제작 용역(전자수의시담)"
+    assert classify(title) == "UNKNOWN"
+
+
+def test_security_light_replacement_is_not_likely_it():
+    # "보안등" is a street/security light, a routine electrical-facilities term - not
+    # information security.
+    title = "OO동 가로등 및 보안등 교체공사 감리용역"
+    assert classify(title) == "UNKNOWN"
+
+
+def test_platform_screen_door_is_not_likely_it():
+    # "플랫폼스크린도어" is a subway safety barrier, not a software platform.
+    title = "OO역 플랫폼스크린도어(PSD) 유지보수 용역"
+    assert classify(title) == "UNKNOWN"
+
+
+def test_informatization_village_is_not_likely_it():
+    # "정보화마을" is a fixed rural-development program brand name, not IT system-building.
+    title = "OO정보화마을 특산물 판매 및 운영 지원 용역"
+    assert classify(title) == "UNKNOWN"
+
+
+def test_school_name_containing_accidental_computer_keyword_is_not_likely_it():
+    # "대전산성초" contains "전산" only across 대전 + 산성초. The actual deliverable is
+    # supervision of solar-panel electrical construction at three schools.
+    title = "대전가양초 등 3교(대전산성초, 대전유평초) 태양광발전장치 설치 전기공사 감리용역"
+    assert classify(title) == "UNKNOWN"
+
+
+def test_safety_industry_does_not_match_computer_keyword_across_morphemes():
+    # "안전산업" contains "전산" only across 안전 + 산업; this is exhibition setup.
+    title = "2026년 안전산업박람회 전시관 설치 용역"
+    assert classify(title) == "UNKNOWN"
+
+
+def test_non_it_output_and_editing_phrases_containing_computer_keyword():
+    titles = [
+        "2027학년도 초등교사 임용시험 문제지 전산편집 및 삽화 용역",
+        "2027학년도 대학수학능력시험 문제지 전산편집 및 삽화 용역",
+        "2027년도 대한적십자사 적십자회비 모금용 지로 전산출력 및 봉입발송 용역 단가계약",
+    ]
+    for title in titles:
+        assert classify(title) == "UNKNOWN", title
+
+
+def test_security_topic_or_organization_does_not_make_non_it_contract_likely_it():
+    titles = [
+        "제4차 항공보안 기본계획(2027~2031) 수립 연구",
+        "첨단보안협동조합 지원사업 관련 퍼포먼스 마케팅 및 키워드 광고 용역",
+        "아주대학교 데이터보안·활용융합분야 CO-SHOW 행사 기획 및 운영업체 선정 입찰",
+        "[재공고] 아주대학교 데이터보안·활용융합분야 CO-SHOW 행사 기획 및 운영업체 선정 입찰",
+    ]
+    for title in titles:
+        assert classify(title) == "UNKNOWN", title
+
+
+def test_research_collaboration_network_is_not_a_computer_network():
+    title = "농식품 분야 글로벌 R&D 전략 수립 및 네트워크 구축"
+    assert classify(title) == "UNKNOWN"
+
+
+def test_exception_phrase_does_not_hide_a_separate_real_it_keyword():
+    # Exceptions remove only the confirmed non-IT phrase. A genuine technology keyword
+    # elsewhere must still route the opportunity to IT.
+    titles = [
+        "대전산성초 전산실 네트워크 개선 용역",
+        "안전산업 정보시스템 구축 용역",
+        "항공보안 정보시스템 구축 사업",
+        "데이터보안·활용융합분야 CO-SHOW 홈페이지 구축 용역",
+    ]
+    for title in titles:
+        assert classify(title) == "LIKELY_IT", title
