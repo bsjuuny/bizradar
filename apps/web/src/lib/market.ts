@@ -86,21 +86,32 @@ export async function getMarketStats(): Promise<MarketStats> {
   );
 
   const ids = opportunities.map((o) => o.id);
-  const analyses =
-    ids.length === 0
-      ? []
-      : await fetchAllRows<{
-          opportunity_id: string;
-          min_experience_years: number | null;
-          required_qualifications: string[] | null;
-        }>((from, to) =>
-          supabase
-            .from("project_analyses")
-            .select("opportunity_id, min_experience_years, required_qualifications")
-            .eq("status", "SUCCESS")
-            .in("opportunity_id", ids)
-            .range(from, to),
-        );
+  // .in() puts every id in the request URL - with enough IT opportunities (this hit it
+  // at 790, well past the 380 this was live-verified against on 2026-08-09) the URL
+  // exceeds PostgREST's request-size limit and the whole query fails with a bare "Bad
+  // Request". Chunk the id list so it keeps working as the dataset grows.
+  const ID_CHUNK_SIZE = 150;
+  const analyses: {
+    opportunity_id: string;
+    min_experience_years: number | null;
+    required_qualifications: string[] | null;
+  }[] = [];
+  for (let i = 0; i < ids.length; i += ID_CHUNK_SIZE) {
+    const chunk = ids.slice(i, i + ID_CHUNK_SIZE);
+    const rows = await fetchAllRows<{
+      opportunity_id: string;
+      min_experience_years: number | null;
+      required_qualifications: string[] | null;
+    }>((from, to) =>
+      supabase
+        .from("project_analyses")
+        .select("opportunity_id, min_experience_years, required_qualifications")
+        .eq("status", "SUCCESS")
+        .in("opportunity_id", chunk)
+        .range(from, to),
+    );
+    analyses.push(...rows);
+  }
 
   const restricted = opportunities.filter((o) => (o.region_restriction ?? "").trim().length > 0);
 
