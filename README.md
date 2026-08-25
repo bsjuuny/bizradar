@@ -4,8 +4,9 @@ B2B SaaS MVP that helps IT/SI companies (5-50 employees) discover public-sector 
 projects and government support programs, and track the public IT market.
 
 Status: **Phase 0-6 done** - repo/testing foundation, Supabase auth + company profile,
-the G2B collector, Project Radar (browse/search collected bid announcements), Ollama-
-backed AI analysis (rule filter + structured extraction), and a rule-based Match Engine
+the G2B bid and award collectors, Project Radar (browse/search announcements and see
+the winning company when published), Ollama-backed AI analysis (rule filter +
+structured extraction), and a rule-based Match Engine
 (Company Match settings + per-opportunity match score, no LLM), and **CHALLENGE**
 (official contest collection, search/filter/detail, conservative AI-policy evidence).
 See `docs/CHALLENGES.md`, `docs/MVP_SCOPE.md`
@@ -51,7 +52,7 @@ Auth/RLS setup is documented in `docs/DATABASE.md` and `docs/ARCHITECTURE.md`.
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
-copy .env.worker.example .env.worker   # fill in SUPABASE_SERVICE_ROLE_KEY, G2B_API_KEY
+copy .env.worker.example .env.worker   # fill in Supabase, G2B_API_KEY, G2B_AWARD_API_KEY
 pm2 start ecosystem.config.cjs
 ```
 
@@ -64,9 +65,10 @@ cp .env.worker.example .env.worker
 pm2 start ecosystem.config.cjs
 ```
 
-This starts `g2b-collect` (hourly - see `docs/DATA_PIPELINE.md` for the G2B API's two
-non-obvious gotchas before touching `worker/collectors/g2b.py`), `analyze` (every 10
-minutes, batches of 5 - needs a local Ollama running with `qwen3.5:9b` pulled via
+This starts `g2b-collect` (hourly) and `g2b-award-collect` (every six hours when
+`G2B_AWARD_API_KEY` is configured - see `docs/DATA_PIPELINE.md` for API details),
+alongside `analyze` (every 10 minutes, batches of 5 - needs a local Ollama running with
+`qwen3.5:9b` pulled via
 `ollama pull qwen3.5:9b`, otherwise it logs a failure and skips itself each run, G2B
 collection is unaffected), and `match` (every 15 minutes, no external dependency -
 recomputes every company x analyzed-opportunity pair, see

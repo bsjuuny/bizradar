@@ -55,6 +55,8 @@ export type MatchScoreBreakdown = {
 };
 
 export type OpportunityDetail = OpportunitySummary & {
+  bid_ntce_no: string | null;
+  bid_ntce_ord: number | null;
   demand_organization: string | null;
   estimated_price: number | null;
   region_restriction: string | null;
@@ -62,6 +64,17 @@ export type OpportunityDetail = OpportunitySummary & {
   source_url: string | null;
   analysis: ProjectAnalysis | null;
   matchBreakdown: MatchScoreBreakdown | null;
+  award: G2BAwardResult | null;
+};
+
+export type G2BAwardResult = {
+  winner_name: string;
+  award_amount: number | null;
+  award_rate: number | null;
+  planned_price: number | null;
+  participant_count: number | null;
+  opened_at: string | null;
+  awarded_at: string | null;
 };
 
 export type OpportunityPage = {
@@ -181,7 +194,7 @@ export async function getOpportunity(id: string): Promise<OpportunityDetail | nu
     .from("opportunities")
     .select(
       "id, title, category, organization, demand_organization, budget_amount, estimated_price, " +
-        "region_restriction, posted_at, bid_close_at, open_at, source_url, " +
+        "region_restriction, posted_at, bid_close_at, open_at, source_url, bid_ntce_no, bid_ntce_ord, " +
         "analysis:project_analyses(status, project_type, technologies, required_roles, requirements, risks, summary)",
     )
     .eq("id", id)
@@ -192,7 +205,10 @@ export async function getOpportunity(id: string): Promise<OpportunityDetail | nu
 
   // project_analyses has a unique(opportunity_id) constraint, so this is a true 1:1
   // relationship, but PostgREST's embed still types it as an array in the generic case.
-  const raw = data as unknown as Omit<OpportunityDetail, "analysis" | "matchScore" | "matchBreakdown"> & {
+  const raw = data as unknown as Omit<
+    OpportunityDetail,
+    "analysis" | "matchScore" | "matchBreakdown" | "award"
+  > & {
     analysis: ProjectAnalysis[] | ProjectAnalysis | null;
   };
   const analysis = Array.isArray(raw.analysis) ? (raw.analysis[0] ?? null) : raw.analysis;
@@ -210,10 +226,34 @@ export async function getOpportunity(id: string): Promise<OpportunityDetail | nu
     console.error("Failed to load match score, showing the opportunity without it", matchError);
   }
 
+  let award: G2BAwardResult | null = null;
+  if (raw.bid_ntce_no) {
+    const awardQuery = supabase
+      .from("g2b_award_results")
+      .select(
+        "winner_name, award_amount, award_rate, planned_price, participant_count, opened_at, awarded_at",
+      )
+      .eq("bid_ntce_no", raw.bid_ntce_no)
+      .eq("bid_ntce_ord", raw.bid_ntce_ord ?? 0)
+      .order("rebid_no", { ascending: false })
+      .order("awarded_at", { ascending: false, nullsFirst: false })
+      .limit(1)
+      .maybeSingle();
+    const { data: awardRow, error: awardError } = await awardQuery;
+    // Award data is enrichment. A delayed migration or upstream-specific issue
+    // must not hide the underlying opportunity detail page.
+    if (awardError) {
+      console.error("Failed to load G2B award result, showing opportunity without it", awardError);
+    } else {
+      award = awardRow;
+    }
+  }
+
   return {
     ...raw,
     analysis,
     matchScore: matchRow?.total_score ?? null,
     matchBreakdown: matchRow ?? null,
+    award,
   };
 }

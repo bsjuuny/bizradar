@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getOpportunity } from "@/lib/opportunities";
-import { formatCurrencyKRW, formatDateTime } from "@/lib/format";
+import { formatCurrencyKRW, formatDate, formatDateTime } from "@/lib/format";
 import { CategoryBadge } from "../category-badge";
 import { MatchScoreBadge } from "../match-score-badge";
 
@@ -108,6 +108,55 @@ export default async function OpportunityDetailPage({
           <dd>{formatDateTime(opportunity.open_at)}</dd>
         </div>
       </dl>
+
+      {opportunity.award && (
+        <section className="rounded-lg border border-emerald-200 bg-emerald-50/50 p-5 dark:border-emerald-900 dark:bg-emerald-950/20">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-sm font-semibold">낙찰 결과</h2>
+            <span className="rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-medium text-emerald-800 dark:bg-emerald-900 dark:text-emerald-100">
+              낙찰
+            </span>
+          </div>
+          <dl className="mt-4 grid grid-cols-1 gap-x-8 gap-y-3 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-muted-foreground">낙찰업체</dt>
+              <dd className="font-medium">{opportunity.award.winner_name}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">낙찰금액</dt>
+              <dd className="tabular-nums">{formatCurrencyKRW(opportunity.award.award_amount)}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">낙찰률</dt>
+              <dd className="tabular-nums">
+                {opportunity.award.award_rate === null
+                  ? "—"
+                  : `${opportunity.award.award_rate.toLocaleString("ko-KR", { maximumFractionDigits: 4 })}%`}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">예정가격</dt>
+              <dd className="tabular-nums">{formatCurrencyKRW(opportunity.award.planned_price)}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">참가업체 수</dt>
+              <dd className="tabular-nums">
+                {opportunity.award.participant_count === null
+                  ? "—"
+                  : `${opportunity.award.participant_count.toLocaleString("ko-KR")}개사`}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">개찰일시</dt>
+              <dd>{formatDateTime(opportunity.award.opened_at)}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">낙찰일</dt>
+              <dd>{formatDate(opportunity.award.awarded_at)}</dd>
+            </div>
+          </dl>
+        </section>
+      )}
 
       {analysis && (
         <section className="flex flex-col gap-4 rounded-lg border border-border p-5">

@@ -8,6 +8,7 @@ def test_defaults_to_mock_mode_and_local_ollama():
     assert settings.ollama_base_url == "http://127.0.0.1:11434"
     assert settings.ollama_model == "qwen3.5:9b"
     assert settings.supabase_url is None
+    assert settings.g2b_award_api_key is None
 
 
 def test_live_mode_is_explicit_opt_in():

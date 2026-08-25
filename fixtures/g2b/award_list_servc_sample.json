@@ -1,0 +1,29 @@
+{
+  "response": {
+    "header": { "resultCode": "00", "resultMsg": "NORMAL SERVICE." },
+    "body": {
+      "totalCount": 1,
+      "pageNo": 1,
+      "numOfRows": 100,
+      "items": [
+        {
+          "bidNtceNo": "R26BK01664123",
+          "bidNtceOrd": "000",
+          "bidClsfcNo": "0",
+          "rbidNo": "0",
+          "bidNtceNm": "양자내성암호 시범전환 사업 공인시험 위탁",
+          "bidwinnrNm": "주식회사 비즈레이더",
+          "bidwinnrBizno": "123-45-67890",
+          "bidwinnrCeoNm": "홍길동",
+          "bidwinnrAdrs": "서울특별시",
+          "sucsfbidAmt": "123456789",
+          "sucsfbidRate": "87.995",
+          "plnprc": "140300000",
+          "prtcptCnum": "7",
+          "rlOpengDt": "202608241100",
+          "fnlSucsfDate": "20260825"
+        }
+      ]
+    }
+  }
+}

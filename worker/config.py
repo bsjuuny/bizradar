@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     supabase_service_role_key: str | None = None
 
     g2b_api_key: str | None = None
+    g2b_award_api_key: str | None = None
     bizinfo_api_key: str | None = None
     kstartup_api_key: str | None = None
 

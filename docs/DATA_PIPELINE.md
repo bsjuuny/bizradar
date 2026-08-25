@@ -67,6 +67,33 @@ Verified live end-to-end (2026-08-07): real API -> real `opportunities` table, K
 text intact, re-running the same window upserts in place (row count unchanged, only
 `updated_at` moves) - see `docs/VERIFICATION_REPORT.md`.
 
+## G2B award results (implemented and live-API verified 2026-08-25)
+
+Bid announcements contain the award method and planned opening time, not the final
+winning company. `worker/collectors/g2b_awards.py:G2BAwardCollector` therefore uses the
+separate official public-data-standard operation:
+
+```text
+http://apis.data.go.kr/1230000/ao/PubDataOpnStdService/getDataSetOpnStdScsbidInfo
+```
+
+Set `G2B_AWARD_API_KEY` in `.env.worker` after applying for
+`조달청_나라장터 공공데이터개방표준서비스`. The award job is deliberately
+independent of `G2B_API_KEY`: without the new key it logs a skip every six hours and the
+existing announcement/analyze/match jobs continue unchanged. It queries `bsnsDivCd=5`
+(용역) by a twelve-hour overlapping opening-time window, paginates, and upserts to
+`g2b_award_results` by notice/order/classification/rebid identity.
+
+Project Radar looks up the newest result using `bid_ntce_no` + `bid_ntce_ord` and shows
+winner name, award amount/rate, planned price, participant count, and opening time. The
+raw response is retained for reparsing. Award lookup is enrichment: a missing migration,
+upstream failure, or notice processed outside G2B never hides the original opportunity.
+
+The request shape and both legacy/current response-field aliases are covered by offline
+tests. A real Encoding key was also verified against the live service on 2026-08-25:
+authentication succeeded and one final-award row normalized with its winner, amount,
+rate, planned price, and opening timestamp populated.
+
 ## Notice-thread deduplication (implemented 2026-08-09)
 
 `(source, external_id)` uniqueness (below) stops the *same* G2B notice from being

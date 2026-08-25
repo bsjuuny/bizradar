@@ -18,9 +18,13 @@
 - Python interpreter resolution: `BIZRADAR_PYTHON` env var if set, else
   `.venv/Scripts/python.exe` (Windows) / `.venv/bin/python` (macOS/Linux) if present,
   else `python`/`python3` on PATH. Never hardcoded.
-- Registered jobs: `g2b-collect` (`worker/jobs/g2b_job.py`) - hourly, 2-hour lookback
-  window, upserts into `opportunities`. A failure is caught and logged, not raised -
-  existing rows are left untouched, other jobs keep running.
+- Registered jobs:
+  - `g2b-collect` (`worker/jobs/g2b_job.py`) - hourly, 2-hour lookback window, upserts
+    into `opportunities`
+  - `g2b-award-collect` (`worker/jobs/g2b_award_job.py`) - every 6 hours, 12-hour
+    opening-time lookback; skips cleanly until `G2B_AWARD_API_KEY` is configured
+- A collector failure is caught and logged, not raised - existing rows are left
+  untouched and other jobs keep running.
 - `worker_heartbeats` table exists (Phase 1 migration) but nothing writes to it yet - no
   job currently reports a heartbeat, so the web dashboard can't show "data last updated
   at ..." until a job does. NOT_IMPLEMENTED.
