@@ -185,12 +185,19 @@ class OllamaProvider(AIProvider):
         return None
 
     def _generate(self, prompt: str, schema: dict[str, Any]) -> str:
+        # think=False is required, not optional, for a thinking-capable model (verified
+        # live against qwen3.5:9b 2026-08-26): with structured `format` and thinking left
+        # on, the model puts its entire JSON answer inside the `thinking` field and
+        # leaves `response` empty - every single call fails "no 'response' field" even
+        # though the model produced a valid answer. Setting think=False moves the same
+        # output back into `response` where the rest of this class expects it.
         resp = self._get_client().post(
             f"{self.settings.ollama_base_url}/api/generate",
             json={
                 "model": self.settings.ollama_model,
                 "prompt": prompt,
                 "format": schema,
+                "think": False,
                 "stream": False,
             },
         )

@@ -16,6 +16,21 @@ from worker.matching.engine import CompanyProfile, MatchScore, OpportunityRequir
 from worker.repositories.opportunities import get_service_client
 
 
+# .in_() puts every id into the GET request's query string. Once project_analyses
+# accumulates enough SUCCESS rows, that id list makes the URL long enough that
+# Supabase's gateway rejects it outright with a plain-text 400 "Bad Request" (not
+# PostgREST's usual JSON error body) before the query ever reaches PostgREST - live-
+# reproduced 2026-08-26 with 769 ids producing a ~30KB URL, and confirmed as the
+# reason match_job had failed on every single run since 2026-08-07: it made this
+# request first, so match_scores never got computed at all. Chunking keeps each
+# request's id list small regardless of how large project_analyses grows.
+_IN_CLAUSE_CHUNK_SIZE = 150
+
+
+def _chunked(items: list[str], size: int) -> list[list[str]]:
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
 def _parse_datetime(value: Any) -> datetime | None:
     # PostgREST returns timestamptz columns as plain JSON strings - supabase-py does no
     # automatic coercion. Found live: passing the raw string into
@@ -94,15 +109,19 @@ def get_analyzed_opportunities() -> list[tuple[str, OpportunityRequirements]]:
         return []
 
     ids = [a["opportunity_id"] for a in analyses]
-    opportunities = cast(
-        "list[dict[str, Any]]",
-        client.table("opportunities_current")
-        .select("id, budget_amount, region_restriction, bid_close_at")
-        .in_("id", ids)
-        .execute()
-        .data
-        or [],
-    )
+    opportunities: list[dict[str, Any]] = []
+    for chunk in _chunked(ids, _IN_CLAUSE_CHUNK_SIZE):
+        opportunities.extend(
+            cast(
+                "list[dict[str, Any]]",
+                client.table("opportunities_current")
+                .select("id, budget_amount, region_restriction, bid_close_at")
+                .in_("id", chunk)
+                .execute()
+                .data
+                or [],
+            )
+        )
     opp_by_id = {o["id"]: o for o in opportunities}
 
     results = []

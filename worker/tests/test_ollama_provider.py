@@ -73,6 +73,22 @@ async def test_extract_project_raises_when_response_field_missing():
 
 
 @pytest.mark.asyncio
+async def test_extract_project_requests_thinking_disabled():
+    # Regression test: with think left on, qwen3.5:9b puts its whole JSON answer in
+    # the `thinking` field and leaves `response` empty (live-verified 2026-08-26),
+    # which every call in this module reads as a failure. think=False must be sent.
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"response": json.dumps(VALID_EXTRACTION)})
+
+    await _provider(handler).extract_project("테스트 공고 내용")
+
+    assert captured["body"]["think"] is False
+
+
+@pytest.mark.asyncio
 async def test_classify_project_delegates_to_extract_project():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"response": json.dumps(VALID_EXTRACTION)})

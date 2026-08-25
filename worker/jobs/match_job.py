@@ -26,11 +26,24 @@ def run() -> None:
         opportunities = get_analyzed_opportunities()
 
         computed = 0
+        failed = 0
         for company_id, company in companies:
             for opportunity_id, requirements in opportunities:
-                score = compute_match_score(company, requirements)
-                upsert_match_score(company_id, opportunity_id, score)
-                computed += 1
+                try:
+                    score = compute_match_score(company, requirements)
+                    upsert_match_score(company_id, opportunity_id, score)
+                    computed += 1
+                except Exception as exc:  # noqa: BLE001 - isolate per-pair failures
+                    logger.warning(
+                        "match: pair scoring failed",
+                        extra={
+                            "company_id": company_id,
+                            "opportunity_id": opportunity_id,
+                            "error": str(exc),
+                        },
+                    )
+                    failed += 1
+                    continue
     except Exception:
         logger.exception(
             "match job failed entirely - existing match_scores are unaffected",
@@ -43,10 +56,11 @@ def run() -> None:
         "match job finished",
         extra={
             "job": "match",
-            "status": "ok",
+            "status": "ok" if failed == 0 else "partial",
             "duration": duration_seconds,
             "companies": len(companies),
             "opportunities": len(opportunities),
             "computed": computed,
+            "failed": failed,
         },
     )
