@@ -14,6 +14,7 @@ const ALL_LINKS = [
     hiddenWhilePending: true,
   },
   { href: "/market", label: "시장 통계", adminOnly: true },
+  { href: "/awards", label: "낙찰 결과", adminOnly: true },
   { href: "/settings", label: "설정" },
   { href: "/admin", label: "회원 승인", adminOnly: true },
 ];
