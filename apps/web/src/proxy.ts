@@ -36,9 +36,19 @@ export async function proxy(request: NextRequest) {
     },
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // A stale/expired refresh token can make getUser() throw instead of resolving
+  // to { user: null } - without this catch, an expired session crashed the
+  // middleware itself instead of falling through to the redirect-to-/login path
+  // below (same failure mode fixed in lib/dal.ts's getUser()).
+  let user = null;
+  try {
+    const {
+      data: { user: fetchedUser },
+    } = await supabase.auth.getUser();
+    user = fetchedUser;
+  } catch {
+    user = null;
+  }
 
   const path = request.nextUrl.pathname;
   const isPublicRoute = PUBLIC_ROUTES.includes(path);

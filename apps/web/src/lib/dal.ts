@@ -7,10 +7,22 @@ import { isPlatformAdmin } from "@/lib/features";
 
 export const getUser = cache(async () => {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return user;
+  try {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    return user;
+  } catch {
+    // An expired/invalid session can make getUser() throw instead of resolving
+    // to { user: null } (e.g. the Auth server rejecting a stale refresh token
+    // with a non-standard response). Without this catch, that exception was
+    // escaping all the way up through requireUser()/getCompany() into the
+    // nearest error.tsx boundary - so an expired session showed a generic
+    // "문제가 발생했습니다" crash screen instead of requireUser() ever getting
+    // to redirect("/login"). Treating any failure here as "not logged in" is
+    // the same call proxy.ts already makes for a missing user.
+    return null;
+  }
 });
 
 export async function requireUser() {
