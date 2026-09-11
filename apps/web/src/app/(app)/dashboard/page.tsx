@@ -68,6 +68,12 @@ export default async function DashboardPage() {
             </div>
           ) : (
             <>
+              <Link href="/queue" className="group rounded-2xl border border-border bg-card p-5 transition hover:-translate-y-0.5 hover:shadow-sm">
+                <p className="text-xs font-medium text-muted-foreground">TODAY QUEUE</p>
+                <h2 className="mt-2 text-lg font-semibold">Review response queue</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Save opportunities, assign owners, and track bid/no-bid status from one screen.</p>
+                <span className="mt-4 inline-block text-sm font-medium group-hover:underline">Open queue</span>
+              </Link>
               <Link href="/opportunities" className="group rounded-2xl border border-border bg-card p-5 transition hover:-translate-y-0.5 hover:shadow-sm">
                 <p className="text-xs font-medium text-muted-foreground">PROJECT RADAR</p>
                 <h2 className="mt-2 text-lg font-semibold">공공 입찰 기회 찾기</h2>

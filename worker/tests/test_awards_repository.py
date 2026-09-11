@@ -66,3 +66,35 @@ def test_upsert_maps_normalized_award(monkeypatch):
             "raw_payload": {"source": "fixture"},
         }
     ]
+
+
+def test_bulk_upsert_batches_rows(monkeypatch):
+    captured: list[list[dict]] = []
+    monkeypatch.setattr(awards, "get_service_client", lambda: _FakeClient(captured))
+    results = [
+        G2BAwardResult(
+            external_id=f"R26-{index}",
+            bid_ntce_no=f"R26-{index}",
+            winner_name=f"winner-{index}",
+            raw_payload={"index": index},
+        )
+        for index in range(3)
+    ]
+
+    persisted = awards.upsert_award_results(results, batch_size=2)
+
+    assert persisted == 3
+    assert [[row["external_id"] for row in batch] for batch in captured] == [
+        ["R26-0", "R26-1"],
+        ["R26-2"],
+    ]
+
+
+def test_bulk_upsert_empty_results_does_not_create_client(monkeypatch):
+    monkeypatch.setattr(
+        awards,
+        "get_service_client",
+        lambda: (_ for _ in ()).throw(AssertionError("client should not be created")),
+    )
+
+    assert awards.upsert_award_results([]) == 0
