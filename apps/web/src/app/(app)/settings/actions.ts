@@ -35,6 +35,7 @@ export async function updateSettings(
     .map((q) => q.trim())
     .filter(Boolean);
   const technologyIds = formData.getAll("technology_ids").map(String);
+  const telegramChatIdRaw = String(formData.get("telegram_chat_id") ?? "").trim();
 
   if (!name) return { error: "회사명을 입력해주세요." };
   if (!SIZE_BANDS.includes(sizeBand as (typeof SIZE_BANDS)[number])) {
@@ -46,6 +47,10 @@ export async function updateSettings(
   if (experienceYears < 0) {
     return { error: "경력 연수는 0 이상이어야 합니다." };
   }
+  if (telegramChatIdRaw && !/^-?\d+$/.test(telegramChatIdRaw)) {
+    return { error: "텔레그램 Chat ID는 숫자만 입력해주세요." };
+  }
+  const telegramChatId = telegramChatIdRaw || null;
 
   const supabase = await createClient();
 
@@ -62,6 +67,7 @@ export async function updateSettings(
       budget_max: budgetMax,
       experience_years: experienceYears,
       qualifications,
+      telegram_chat_id: telegramChatId,
     })
     .eq("id", companyId);
 

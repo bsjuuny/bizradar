@@ -182,6 +182,32 @@ export function SettingsForm({
         </div>
       </section>
 
+      <section className="flex flex-col gap-5 rounded-2xl border border-border bg-card p-5 sm:p-6">
+        <div>
+          <p className="text-xs font-medium tracking-wide text-muted-foreground">알림</p>
+          <h2 className="mt-1 text-lg font-semibold">텔레그램 Watch 다이제스트</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Chat ID를 등록하면, 활성 Watch 조건에 새로 걸리는 공고를 텔레그램으로 받습니다.
+            발급받은 봇과 먼저 대화를 시작한 뒤, <span className="font-medium">@userinfobot</span> 등에서
+            확인한 본인의 텔레그램 숫자 ID를 입력하세요(1:1 대화에서는 어떤 봇과 대화하든 같은 ID를
+            씁니다).
+          </p>
+        </div>
+        <div className="flex flex-col gap-1 sm:max-w-xs">
+          <label htmlFor="telegram_chat_id" className="text-sm font-medium">
+            텔레그램 Chat ID
+          </label>
+          <input
+            id="telegram_chat_id"
+            name="telegram_chat_id"
+            inputMode="numeric"
+            placeholder="예: 123456789"
+            defaultValue={company.telegram_chat_id ?? ""}
+            className={inputClass}
+          />
+        </div>
+      </section>
+
       <div className="sticky bottom-4 flex items-center justify-between gap-4 rounded-xl border border-border bg-background/95 p-3 shadow-lg backdrop-blur">
         <div aria-live="polite">
           {state?.error && <p className="text-sm text-destructive">{state.error}</p>}

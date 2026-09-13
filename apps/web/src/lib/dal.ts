@@ -47,12 +47,13 @@ export type CompanyMembership = {
     experience_years: number;
     qualifications: string[];
     approval_status: "PENDING" | "APPROVED" | "REJECTED";
+    telegram_chat_id: string | null;
   };
 };
 
 const COMPANY_COLUMNS =
   "id, name, size_band, industry, region, business_type, founded_year, " +
-  "budget_min, budget_max, experience_years, qualifications, approval_status";
+  "budget_min, budget_max, experience_years, qualifications, approval_status, telegram_chat_id";
 
 export const getCompany = cache(async (): Promise<CompanyMembership | null> => {
   const user = await getUser();

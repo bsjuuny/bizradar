@@ -8,6 +8,13 @@ password per user (`auth.users`, managed by Supabase Auth), plus company profile
 individual, and isn't treated as personal data here. There is no resident registration
 number, no phone number, no physical address collection anywhere in this app.
 
+Since 2026-09-13, `companies.telegram_chat_id` (optional, Settings) is a second
+personal identifier - a company that opts into the Telegram Watch digest
+(`worker/jobs/digest_job.py`) has their Telegram chat id stored and sent, along with
+digest message text, to Telegram's API. Not collected at signup, has no effect on the
+rest of the app if left blank, and is a third-party data processor in addition to
+Supabase - see the updated `/privacy` sections 1, 2, 4, 5.
+
 ## What's implemented
 
 - **`/privacy`** (`apps/web/src/app/privacy/page.tsx`) - a real 개인정보처리방침 covering
@@ -50,6 +57,15 @@ number, no phone number, no physical address collection anywhere in this app.
   `console.error`/Python `logger.*` call anywhere in `apps/web/src` or `worker` logs a
   user's email address. Error logs use Postgres error objects (`error.message`), not
   user-identifying fields.
+- **Telegram chat_id and bot token are not logged either** (added 2026-09-13 with the
+  Watch digest): `worker/notify/telegram.py`'s failure logs deliberately exclude
+  `chat_id` (a Telegram personal identifier) - `worker/jobs/digest_job.py` logs its own
+  internal `company_id` instead if it needs to record which company's send failed, same
+  as `match_job.py`'s existing convention. Also fixed a real leak found in review before
+  shipping: `httpx.HTTPStatusError`'s default message embeds the full request URL,
+  which contains the bot token (`https://api.telegram.org/bot<TOKEN>/sendMessage`) -
+  logging it directly would have put the token in every failed-send log line. Regression
+  test: `worker/tests/test_telegram_notify.py`.
 
 ## Known gaps (not implemented, said plainly rather than hidden)
 

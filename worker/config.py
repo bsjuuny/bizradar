@@ -24,6 +24,8 @@ class Settings(BaseSettings):
     bizinfo_api_key: str | None = None
     kstartup_api_key: str | None = None
 
+    telegram_bot_token: str | None = None
+
     feature_challenge: bool = True
     challenge_collection_enabled: bool = True
     challenge_collection_cron: str = "0 */6 * * *"

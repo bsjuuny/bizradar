@@ -13,6 +13,7 @@ from worker.jobs import (
     analyze_job,
     challenge_analyze_job,
     challenge_job,
+    digest_job,
     g2b_award_job,
     g2b_job,
     kstartup_job,
@@ -57,6 +58,12 @@ def main() -> None:
             minutes=10,
             id="challenge:reanalyze",
         )
+    if settings.telegram_bot_token:
+        scheduler.add_job(
+            digest_job.run,
+            CronTrigger(hour=9, minute=0, timezone="Asia/Seoul"),
+            id="watch-digest",
+        )
     logger.info(
         "bizradar-worker starting",
         extra={
@@ -68,6 +75,7 @@ def main() -> None:
                 "match (every 15min, all companies x analyzed opportunities)",
                 "challenge:collect (configured cron)",
                 "challenge:reanalyze (every 10min when enabled)",
+                "watch-digest (daily 09:00 KST, when TELEGRAM_BOT_TOKEN is configured)",
             ]
         },
     )
