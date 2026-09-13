@@ -54,6 +54,13 @@ export type MatchScoreBreakdown = {
   total_score: number;
 };
 
+export type NoticeChange = {
+  field: "bid_close_at" | "budget_amount" | "region_restriction" | "open_at";
+  label: string;
+  previousValue: string | number | null;
+  currentValue: string | number | null;
+};
+
 export type OpportunityDetail = OpportunitySummary & {
   bid_ntce_no: string | null;
   bid_ntce_ord: number | null;
@@ -256,4 +263,63 @@ export async function getOpportunity(id: string): Promise<OpportunityDetail | nu
     matchBreakdown: matchRow ?? null,
     award,
   };
+}
+
+const NOTICE_CHANGE_FIELDS: { field: NoticeChange["field"]; label: string }[] = [
+  { field: "bid_close_at", label: "입찰마감" },
+  { field: "open_at", label: "개찰일시" },
+  { field: "budget_amount", label: "배정예산" },
+  { field: "region_restriction", label: "지역제한" },
+];
+
+/**
+ * 같은 나라장터 공고 스레드(bid_ntce_no)의 바로 이전 리비전과 비교해 마감일/예산/지역제한
+ * 등 실무자가 놓치면 안 되는 필드가 바뀌었는지 찾는다. `opportunities`는 리비전마다 별도
+ * 행으로 쌓이고 `opportunities_current`는 최신 것만 보여주므로, 이전 리비전은 원본
+ * `opportunities` 테이블에서 같은 bid_ntce_no + 더 작은 bid_ntce_ord로 직접 조회한다.
+ * 새 테이블/마이그레이션 없이 기존 리비전 이력만으로 계산한다.
+ */
+export async function getNoticeRevisionChanges(
+  bidNtceNo: string | null,
+  bidNtceOrd: number | null,
+): Promise<NoticeChange[]> {
+  await requireUser();
+  // G2B 원본 차수는 0부터 시작한다(최초 등록공고 = 0). ord=0은 비교할 이전 리비전이 없다.
+  if (!bidNtceNo || bidNtceOrd === null || bidNtceOrd <= 0) return [];
+  const supabase = await createClient();
+
+  const { data: previous, error } = await supabase
+    .from("opportunities")
+    .select("bid_close_at, budget_amount, region_restriction, open_at")
+    .eq("bid_ntce_no", bidNtceNo)
+    .lt("bid_ntce_ord", bidNtceOrd)
+    .order("bid_ntce_ord", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    console.error("Failed to load previous notice revision", error);
+    return [];
+  }
+  if (!previous) return [];
+
+  const { data: current, error: currentError } = await supabase
+    .from("opportunities")
+    .select("bid_close_at, budget_amount, region_restriction, open_at")
+    .eq("bid_ntce_no", bidNtceNo)
+    .eq("bid_ntce_ord", bidNtceOrd)
+    .maybeSingle();
+  if (currentError || !current) {
+    if (currentError) console.error("Failed to load current notice revision", currentError);
+    return [];
+  }
+
+  const changes: NoticeChange[] = [];
+  for (const { field, label } of NOTICE_CHANGE_FIELDS) {
+    const previousValue = previous[field] ?? null;
+    const currentValue = current[field] ?? null;
+    if (previousValue !== currentValue) {
+      changes.push({ field, label, previousValue, currentValue });
+    }
+  }
+  return changes;
 }

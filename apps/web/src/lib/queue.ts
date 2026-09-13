@@ -3,6 +3,10 @@ import "server-only";
 import { requireCompany, requireUser } from "@/lib/dal";
 import { createClient } from "@/lib/supabase/server";
 import type { Category, OpportunitySummary } from "@/lib/opportunities";
+import { daysUntilDeadline } from "@/lib/format";
+
+/** 이 안이면 "오늘 결정해야 할" 긴급 항목으로 취급한다 (D-3 ~ D-Day). */
+const URGENT_WINDOW_DAYS = 3;
 
 export type QueueStatus = "REVIEWING" | "RESPONDING" | "ON_HOLD" | "DECLINED";
 
@@ -28,20 +32,30 @@ export type WatchCondition = {
 export type QueueItem = OpportunitySummary & {
   saved: SavedOpportunity | null;
   watchMatches: string[];
+  /** 이 공고의 나라장터 리비전이 바뀌면서 마감일/예산/지역제한이 달라졌는지. */
+  hasRevisionChange: boolean;
 };
 
 export type TodayQueue = {
   items: QueueItem[];
+  /** bid_close_at이 오늘부터 D-3 이내이고 아직 DECLINED로 정리되지 않은 항목. */
+  urgentItems: QueueItem[];
   savedCount: number;
   respondingCount: number;
   watchConditions: WatchCondition[];
 };
 
+function isUrgent(item: QueueItem, now: Date): boolean {
+  if (item.saved?.status === "DECLINED") return false;
+  const days = daysUntilDeadline(item.bid_close_at, now);
+  return days !== null && days >= 0 && days <= URGENT_WINDOW_DAYS;
+}
+
 function escapeLikeTerm(term: string): string {
   return term.replace(/[%_]/g, "\\$&");
 }
 
-function matchesWatch(
+export function matchesWatch(
   opportunity: OpportunitySummary,
   watch: WatchCondition,
   matchScore: number | null,
@@ -61,19 +75,78 @@ function matchesWatch(
   return true;
 }
 
+const REVISION_CHANGE_FIELDS = ["bid_close_at", "budget_amount", "region_restriction", "open_at"] as const;
+
+/**
+ * 큐에 보이는 공고 중 마감일/예산/지역제한이 바뀐(리비전이 올라간) 것의 id 집합을 계산한다.
+ * 공고당 별도 쿼리를 날리면 큐 페이지 로드마다 최대 80번의 추가 쿼리가 나가므로, 관련된
+ * bid_ntce_no를 한 번에 모아 opportunities 원본 테이블에서 그 리비전들만 한 번에 가져와
+ * 메모리에서 비교한다(N+1 방지).
+ */
+async function getRevisionChangedIds(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  opportunities: { id: string; bid_ntce_no: string | null; bid_ntce_ord: number | null }[],
+): Promise<Set<string>> {
+  // G2B 원본 차수는 0부터 시작한다(최초 등록공고 = 0, 첫 정정/변경공고 = 1 - 아래
+  // worker/tests/test_g2b_collector.py에서 확인). ord=0이면 비교할 이전 리비전이
+  // 없으므로 그때만 건너뛴다.
+  const candidates = opportunities.filter(
+    (o): o is { id: string; bid_ntce_no: string; bid_ntce_ord: number } =>
+      o.bid_ntce_no !== null && o.bid_ntce_ord !== null && o.bid_ntce_ord > 0,
+  );
+  if (candidates.length === 0) return new Set();
+
+  const bidNtceNos = [...new Set(candidates.map((c) => c.bid_ntce_no))];
+  const { data: revisions, error } = await supabase
+    .from("opportunities")
+    .select("bid_ntce_no, bid_ntce_ord, bid_close_at, budget_amount, region_restriction, open_at")
+    .in("bid_ntce_no", bidNtceNos);
+  if (error) {
+    console.error("Failed to load notice revisions for change detection", error);
+    return new Set();
+  }
+
+  const byThread = new Map<string, typeof revisions>();
+  for (const row of revisions ?? []) {
+    const list = byThread.get(row.bid_ntce_no) ?? [];
+    list.push(row);
+    byThread.set(row.bid_ntce_no, list);
+  }
+
+  const changedIds = new Set<string>();
+  for (const candidate of candidates) {
+    const thread = (byThread.get(candidate.bid_ntce_no) ?? []).slice().sort((a, b) => a.bid_ntce_ord - b.bid_ntce_ord);
+    const currentIndex = thread.findIndex((r) => r.bid_ntce_ord === candidate.bid_ntce_ord);
+    if (currentIndex <= 0) continue; // no earlier revision in the fetched set
+    const current = thread[currentIndex];
+    const previous = thread[currentIndex - 1];
+    const changed = REVISION_CHANGE_FIELDS.some((field) => current[field] !== previous[field]);
+    if (changed) changedIds.add(candidate.id);
+  }
+  return changedIds;
+}
+
 export async function getTodayQueue(): Promise<TodayQueue> {
   await requireUser();
   const { company } = await requireCompany();
   const supabase = await createClient();
+  const now = new Date();
 
+  // opportunities_current는 마감이 지난 공고를 걸러 주지 않는다(취소공고만 제외). 마감일
+  // 오름차순으로 80건만 가져오면 과거에 마감된 공고가 아직 많이 쌓여 있을 때 그것들이
+  // 창을 채워 버려서 정작 다가오는 마감은 하나도 안 보이는 문제가 생긴다(실 데이터로 확인:
+  // 14,453건 중 상위 80건이 전부 몇 달 전에 이미 마감된 건이었음). 마감일이 아직 안
+  // 지났거나(오늘 포함) 아예 정해지지 않은 공고만 가져온다.
   const { data: opportunities, error: opportunityError } = await supabase
     .from("opportunities_current")
-    .select("id, title, category, organization, budget_amount, posted_at, bid_close_at")
+    .select("id, title, category, organization, budget_amount, posted_at, bid_close_at, bid_ntce_no, bid_ntce_ord")
+    .or(`bid_close_at.gte.${now.toISOString()},bid_close_at.is.null`)
     .order("bid_close_at", { ascending: true, nullsFirst: false })
     .limit(80);
   if (opportunityError) throw new Error(`Failed to load queue opportunities: ${opportunityError.message}`);
 
   const ids = (opportunities ?? []).map((item) => item.id);
+  const revisionChangedIds = await getRevisionChangedIds(supabase, opportunities ?? []);
 
   const { data: matchRows, error: matchError } = ids.length
     ? await supabase.from("match_scores").select("opportunity_id, total_score").in("opportunity_id", ids)
@@ -112,6 +185,7 @@ export async function getTodayQueue(): Promise<TodayQueue> {
         watchMatches: watches
           .filter((watch) => matchesWatch(summary, watch, matchScore))
           .map((watch) => watch.name),
+        hasRevisionChange: revisionChangedIds.has(item.id),
       };
     })
     .sort((a, b) => {
@@ -124,8 +198,13 @@ export async function getTodayQueue(): Promise<TodayQueue> {
       return String(a.bid_close_at ?? "9999").localeCompare(String(b.bid_close_at ?? "9999"));
     });
 
+  const urgentItems = items
+    .filter((item) => isUrgent(item, now))
+    .sort((a, b) => String(a.bid_close_at ?? "9999").localeCompare(String(b.bid_close_at ?? "9999")));
+
   return {
     items,
+    urgentItems,
     savedCount: savedRows?.length ?? 0,
     respondingCount: (savedRows ?? []).filter((row) => row.status === "RESPONDING").length,
     watchConditions: watches,

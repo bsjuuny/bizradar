@@ -24,13 +24,17 @@ export function formatDateTime(iso: string | null | undefined): string {
   }).format(date);
 }
 
-export function formatDday(
+/**
+ * Asia/Seoul 달력일 기준으로 마감일까지 남은 일수. 음수면 이미 지난 마감.
+ * `formatDday`와 큐 정렬(`lib/queue.ts`)이 같은 계산을 공유하도록 분리했다.
+ */
+export function daysUntilDeadline(
   iso: string | null | undefined,
   now: Date = new Date(),
-): string {
-  if (!iso) return "일정 미정";
+): number | null {
+  if (!iso) return null;
   const deadline = new Date(iso);
-  if (Number.isNaN(deadline.getTime())) return "일정 미정";
+  if (Number.isNaN(deadline.getTime())) return null;
   const todayKey = new Intl.DateTimeFormat("en-CA", {
     timeZone: "Asia/Seoul",
     year: "numeric",
@@ -44,9 +48,17 @@ export function formatDday(
     day: "2-digit",
   }).format(deadline);
   const day = 86_400_000;
-  const diff = Math.round(
+  return Math.round(
     (Date.parse(`${deadlineKey}T00:00:00Z`) - Date.parse(`${todayKey}T00:00:00Z`)) / day,
   );
+}
+
+export function formatDday(
+  iso: string | null | undefined,
+  now: Date = new Date(),
+): string {
+  const diff = daysUntilDeadline(iso, now);
+  if (diff === null) return "일정 미정";
   if (diff < 0) return "마감";
   if (diff === 0) return "D-Day";
   return `D-${diff}`;

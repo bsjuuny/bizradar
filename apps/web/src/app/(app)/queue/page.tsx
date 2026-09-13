@@ -62,6 +62,14 @@ function QueueCard({ item }: { item: QueueItem }) {
                 {STATUS_LABELS[item.saved.status]}
               </span>
             )}
+            {item.hasRevisionChange && (
+              <Link
+                href={`/opportunities/${item.id}`}
+                className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800 hover:underline dark:bg-amber-950 dark:text-amber-300"
+              >
+                변경공고
+              </Link>
+            )}
           </div>
           <h2 className="mt-3 text-lg font-semibold leading-snug">
             <Link href={`/opportunities/${item.id}`} className="hover:underline">
@@ -102,8 +110,16 @@ function QueueCard({ item }: { item: QueueItem }) {
 
 export default async function QueuePage() {
   const queue = await getTodayQueue();
-  const highPriority = queue.items.filter((item) => item.saved || item.watchMatches.length > 0 || (item.matchScore ?? 0) >= 70);
-  const visibleItems = highPriority.length > 0 ? highPriority : queue.items.slice(0, 20);
+  const urgentIds = new Set(queue.urgentItems.map((item) => item.id));
+  const highPriority = queue.items.filter(
+    (item) => !urgentIds.has(item.id) && (item.saved || item.watchMatches.length > 0 || (item.matchScore ?? 0) >= 70),
+  );
+  const remaining = queue.items.filter((item) => !urgentIds.has(item.id));
+  // 긴급(D-3) 섹션이 이미 있으면, 그 아래 "그 외 주목할 공고"는 실제로 주목할 만한
+  // 항목(highPriority)만 보여준다 - 긴급 항목이 오늘 볼 것을 이미 다뤘는데 점수 낮은
+  // 나머지 20건으로 억지로 채우면 신호보다 소음이 커진다. 긴급도 없을 때만 폴백으로 채운다.
+  const visibleItems =
+    highPriority.length > 0 ? highPriority : queue.urgentItems.length > 0 ? [] : remaining.slice(0, 20);
 
   return (
     <div className="flex flex-col gap-6">
@@ -116,8 +132,9 @@ export default async function QueuePage() {
         </p>
       </header>
 
-      <section className="grid gap-3 sm:grid-cols-3">
+      <section className="grid gap-3 sm:grid-cols-4">
         {[
+          ["Urgent (D-3)", queue.urgentItems.length],
           ["Saved", queue.savedCount],
           ["Responding", queue.respondingCount],
           ["Watch rules", queue.watchConditions.length],
@@ -130,14 +147,30 @@ export default async function QueuePage() {
       </section>
 
       <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="flex flex-col gap-3">
-          {visibleItems.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-              No opportunities are ready for the queue yet.
+        <div className="flex flex-col gap-6">
+          {queue.urgentItems.length > 0 && (
+            <div className="flex flex-col gap-3">
+              <h2 className="flex items-center gap-2 text-sm font-semibold text-red-700 dark:text-red-400">
+                오늘 결정 필요 (마감 D-3 이내)
+              </h2>
+              {queue.urgentItems.map((item) => (
+                <QueueCard key={item.id} item={item} />
+              ))}
             </div>
-          ) : (
-            visibleItems.map((item) => <QueueCard key={item.id} item={item} />)
           )}
+
+          <div className="flex flex-col gap-3">
+            {queue.urgentItems.length > 0 && visibleItems.length > 0 && (
+              <h2 className="text-sm font-semibold text-muted-foreground">그 외 주목할 공고</h2>
+            )}
+            {visibleItems.length === 0 && queue.urgentItems.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
+                No opportunities are ready for the queue yet.
+              </div>
+            ) : (
+              visibleItems.map((item) => <QueueCard key={item.id} item={item} />)
+            )}
+          </div>
         </div>
 
         <aside className="flex flex-col gap-4">

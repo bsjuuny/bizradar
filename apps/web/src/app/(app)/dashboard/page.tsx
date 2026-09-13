@@ -1,12 +1,15 @@
 import Link from "next/link";
 import { requireCompany } from "@/lib/dal";
 import { isChallengeEnabled } from "@/lib/features";
+import { getWatchDigest } from "@/lib/digest";
+import { formatCurrencyKRW, formatDday } from "@/lib/format";
 
 export default async function DashboardPage() {
   const { company } = await requireCompany();
   const challengeEnabled = isChallengeEnabled();
   const isPending = company.approval_status === "PENDING";
   const isRejected = company.approval_status === "REJECTED";
+  const digest = isPending || isRejected ? null : await getWatchDigest();
 
   return (
     <div className="flex flex-col gap-8">
@@ -32,6 +35,65 @@ export default async function DashboardPage() {
           <p className="font-medium">가입이 승인되지 않았습니다.</p>
           <p className="mt-1 text-muted-foreground">문의사항은 운영자에게 연락해주세요.</p>
         </div>
+      )}
+
+      {digest && (
+        <section className="rounded-2xl border border-border bg-card p-5 sm:p-6">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-xs font-medium tracking-wide text-muted-foreground">
+                WATCH DIGEST · 최근 {digest.windowHours}시간
+              </p>
+              <h2 className="mt-1 text-lg font-semibold">Watch 조건에 새로 걸린 공고</h2>
+            </div>
+            <Link href="/queue" className="text-sm font-medium underline underline-offset-4">
+              Watch 관리
+            </Link>
+          </div>
+
+          {digest.activeWatchCount === 0 ? (
+            <p className="mt-4 text-sm text-muted-foreground">
+              활성 Watch 조건이 없습니다.{" "}
+              <Link href="/queue" className="underline underline-offset-2">
+                Today Queue
+              </Link>
+              에서 조건을 만들면 새 공고가 올라올 때 여기서 바로 확인할 수 있습니다.
+            </p>
+          ) : digest.matches.length === 0 ? (
+            <p className="mt-4 text-sm text-muted-foreground">
+              최근 {digest.windowHours}시간 동안 Watch 조건에 새로 걸린 공고가 없습니다.
+            </p>
+          ) : (
+            <ul className="mt-4 flex flex-col gap-2">
+              {digest.matches.map(({ opportunity, watchNames }) => (
+                <li
+                  key={opportunity.id}
+                  className="flex flex-col gap-1 rounded-xl bg-muted/40 p-3 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="min-w-0">
+                    <Link href={`/opportunities/${opportunity.id}`} className="font-medium hover:underline">
+                      {opportunity.title}
+                    </Link>
+                    <p className="mt-0.5 text-xs text-muted-foreground">
+                      {opportunity.organization ?? "공고기관 미확인"} · {formatCurrencyKRW(opportunity.budget_amount)} ·{" "}
+                      {formatDday(opportunity.bid_close_at)}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-1.5">
+                    {watchNames.map((name) => (
+                      <span
+                        key={name}
+                        className="rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs text-blue-700 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200"
+                      >
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       )}
 
       <section className="grid gap-4 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)]">

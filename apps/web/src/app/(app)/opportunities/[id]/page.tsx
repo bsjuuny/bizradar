@@ -1,7 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getOpportunity } from "@/lib/opportunities";
+import { getOpportunity, getNoticeRevisionChanges, type NoticeChange } from "@/lib/opportunities";
+import { getOrganizationAwardHistory } from "@/lib/awards";
 import { formatCurrencyKRW, formatDate, formatDateTime } from "@/lib/format";
+import { explainMatchBreakdown } from "@/lib/match-explanation";
 import { CategoryBadge } from "../category-badge";
 import { MatchScoreBadge } from "../match-score-badge";
 
@@ -14,6 +16,13 @@ const PROJECT_TYPE_LABELS: Record<string, string> = {
   INFRASTRUCTURE: "인프라",
   OTHER: "기타",
 };
+
+function formatChangeValue(field: NoticeChange["field"], value: string | number | null): string {
+  if (value === null) return "미정";
+  if (field === "bid_close_at" || field === "open_at") return formatDateTime(String(value));
+  if (field === "budget_amount") return formatCurrencyKRW(Number(value));
+  return String(value);
+}
 
 export default async function OpportunityDetailPage({
   params,
@@ -28,6 +37,12 @@ export default async function OpportunityDetailPage({
   if (!opportunity) notFound();
 
   const analysis = opportunity.analysis?.status === "SUCCESS" ? opportunity.analysis : null;
+  const organizationWinners = opportunity.organization
+    ? await getOrganizationAwardHistory(opportunity.organization, {
+        excludeBidNtceNo: opportunity.bid_ntce_no,
+      })
+    : [];
+  const revisionChanges = await getNoticeRevisionChanges(opportunity.bid_ntce_no, opportunity.bid_ntce_ord);
   // `from` is the list page's own search/filter/page query string, passed through by
   // its row links (see opportunities/page.tsx) so this restores that exact view instead
   // of resetting to the default list.
@@ -48,28 +63,51 @@ export default async function OpportunityDetailPage({
         <p className="text-sm text-muted-foreground">{opportunity.organization ?? "공고기관 미확인"}</p>
       </header>
 
+      {revisionChanges.length > 0 && (
+        <section className="rounded-lg border border-amber-200 bg-amber-50/60 p-4 dark:border-amber-900 dark:bg-amber-950/20">
+          <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+            변경공고 - 이전 공고 대비 아래 항목이 바뀌었습니다.
+          </p>
+          <ul className="mt-2 flex flex-col gap-1 text-sm text-amber-900/90 dark:text-amber-200/90">
+            {revisionChanges.map((change) => (
+              <li key={change.field}>
+                <span className="font-medium">{change.label}</span>: {formatChangeValue(change.field, change.previousValue)}
+                {" → "}
+                {formatChangeValue(change.field, change.currentValue)}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       {opportunity.matchBreakdown && (
         <section className="rounded-lg border border-border p-5">
           <h2 className="text-sm font-semibold">Company Match</h2>
-          <dl className="mt-3 grid grid-cols-2 gap-x-6 gap-y-2 text-sm sm:grid-cols-4">
-            {(
-              [
-                ["기술", opportunity.matchBreakdown.technology_score, 30],
-                ["사업 형태", opportunity.matchBreakdown.business_type_score, 20],
-                ["예산", opportunity.matchBreakdown.budget_score, 15],
-                ["경력", opportunity.matchBreakdown.experience_score, 15],
-                ["자격/인증", opportunity.matchBreakdown.qualification_score, 10],
-                ["지역", opportunity.matchBreakdown.region_score, 5],
-                ["일정", opportunity.matchBreakdown.schedule_score, 5],
-              ] as const
-            ).map(([label, score, max]) => (
-              <div key={label}>
-                <dt className="text-xs text-muted-foreground">{label}</dt>
-                <dd className="tabular-nums">
-                  {Math.round(score)} / {max}
-                </dd>
-              </div>
-            ))}
+          <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+            {explainMatchBreakdown(opportunity.matchBreakdown, {
+              bidCloseAt: opportunity.bid_close_at,
+              budgetAmount: opportunity.budget_amount,
+            }).map(
+              ({ key, label, score, max, verdict, message }) => (
+                <div key={key} className="flex items-start justify-between gap-3 rounded-md bg-muted/30 p-3">
+                  <div className="min-w-0">
+                    <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
+                    <dd className="mt-0.5 text-xs text-muted-foreground">{message}</dd>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium tabular-nums ${
+                      verdict === "full"
+                        ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300"
+                        : verdict === "partial"
+                          ? "bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300"
+                          : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    {Math.round(score)} / {max}
+                  </span>
+                </div>
+              ),
+            )}
           </dl>
         </section>
       )}
@@ -155,6 +193,32 @@ export default async function OpportunityDetailPage({
               <dd>{formatDate(opportunity.award.awarded_at)}</dd>
             </div>
           </dl>
+        </section>
+      )}
+
+      {organizationWinners.length > 0 && (
+        <section className="rounded-lg border border-border p-5">
+          <h2 className="text-sm font-semibold">이 발주처 최근 낙찰 이력</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {opportunity.organization}의 최근 공고 중 낙찰 결과가 확인된 건에서 자주 낙찰된 업체입니다.
+          </p>
+          <ul className="mt-4 flex flex-col gap-2">
+            {organizationWinners.map((winner, index) => (
+              <li
+                key={winner.winnerName}
+                className="flex items-center justify-between gap-3 rounded-md bg-muted/30 px-3 py-2 text-sm"
+              >
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="text-xs font-semibold text-muted-foreground tabular-nums">{index + 1}</span>
+                  <span className="truncate font-medium">{winner.winnerName}</span>
+                </div>
+                <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+                  <span className="tabular-nums">{winner.winCount}회 낙찰</span>
+                  <span className="tabular-nums">{formatCurrencyKRW(winner.totalAwardAmount)}</span>
+                </div>
+              </li>
+            ))}
+          </ul>
         </section>
       )}
 
