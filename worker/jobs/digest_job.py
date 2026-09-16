@@ -32,7 +32,11 @@ from worker.repositories.watch_digest import (
 logger = logging.getLogger(__name__)
 
 DIGEST_WINDOW_HOURS = 24
-MAX_ITEMS_PER_MESSAGE = 10
+# 텔레그램 sendMessage의 상한은 4,096자다. 그 숫자를 그대로 쓰지 않는 이유:
+# 상한은 UTF-16 코드 유닛 기준이라 한글에서 파이썬 len()과 어긋나고, 제목·기관명은
+# G2B 원문이라 길이를 통제할 수 없다. 넘치면 400으로 메시지 전체가 실패해 한 건도
+# 전달되지 않으므로, 여유를 두고 자른 뒤 여러 건으로 나눠 보낸다.
+MAX_MESSAGE_CHARS = 3_500
 
 
 def _has_watch_criteria(watch: dict[str, Any]) -> bool:
@@ -77,20 +81,55 @@ def _matches_watch(
     return True
 
 
-def _format_message(company_name: str, matches: list[tuple[dict[str, Any], list[str]]]) -> str:
-    lines = [
-        f"[{company_name}] Watch 다이제스트",
-        f"최근 {DIGEST_WINDOW_HOURS}시간 신규 매칭 {len(matches)}건",
-        "",
+def _item_line(opportunity: dict[str, Any], watch_names: list[str]) -> str:
+    title = opportunity.get("title", "(제목 없음)")
+    org = opportunity.get("organization") or "공고기관 미확인"
+    return f"- {title} ({org}) — {', '.join(watch_names)}"
+
+
+def _format_messages(
+    company_name: str, matches: list[tuple[dict[str, Any], list[str]]]
+) -> list[tuple[str, list[str]]]:
+    """(메시지 본문, 그 메시지에 담긴 opportunity_id들) 목록.
+
+    예전에는 상위 10건만 싣고 "...외 N건"으로 뭉갰는데, 호출부가 매칭된 전체를
+    mark_sent()에 넘기고 있어서 잘린 건들이 화면에 한 번도 안 나온 채 발송 완료로
+    기록됐다 - 그 공고는 영영 다시 안 나온다. 이제 전부 싣되 길이 상한에서 끊고,
+    각 메시지가 실제로 담은 id만 호출부가 기록하도록 함께 돌려준다.
+    """
+    total = len(matches)
+    chunks: list[tuple[str, list[str]]] = []
+    index = 0
+    while index < total:
+        header = [f"[{company_name}] Watch 다이제스트"]
+        if total > 1:
+            header.append(f"최근 {DIGEST_WINDOW_HOURS}시간 신규 매칭 {total}건 (일부 {{part}})")
+        else:
+            header.append(f"최근 {DIGEST_WINDOW_HOURS}시간 신규 매칭 {total}건")
+        header.append("")
+
+        lines: list[str] = []
+        ids: list[str] = []
+        length = sum(len(line) + 1 for line in header)
+        while index < total:
+            opportunity, watch_names = matches[index]
+            line = _item_line(opportunity, watch_names)
+            # 한 건이 통째로 상한을 넘으면 그 건만 담아 보낸다. 그러지 않으면
+            # while 루프가 전진하지 못해 무한 루프가 된다.
+            if lines and length + len(line) + 1 > MAX_MESSAGE_CHARS:
+                break
+            lines.append(line)
+            ids.append(opportunity["id"])
+            length += len(line) + 1
+            index += 1
+        chunks.append(("\n".join(header + lines), ids))
+
+    if len(chunks) == 1:
+        return [(chunks[0][0].replace(" (일부 {part})", ""), chunks[0][1])]
+    return [
+        (body.replace("{part}", f"{number}/{len(chunks)}"), ids)
+        for number, (body, ids) in enumerate(chunks, start=1)
     ]
-    for opportunity, watch_names in matches[:MAX_ITEMS_PER_MESSAGE]:
-        title = opportunity.get("title", "(제목 없음)")
-        org = opportunity.get("organization") or "공고기관 미확인"
-        lines.append(f"- {title} ({org}) — {', '.join(watch_names)}")
-    remaining = len(matches) - MAX_ITEMS_PER_MESSAGE
-    if remaining > 0:
-        lines.append(f"...외 {remaining}건")
-    return "\n".join(lines)
 
 
 def run() -> None:
@@ -140,11 +179,15 @@ def run() -> None:
             if not matches:
                 continue
 
-            message = _format_message(company["name"], matches)
-            if send_telegram_message(company["telegram_chat_id"], message):
-                mark_sent(company_id, [o["id"] for o, _ in matches])
-                sent_count += 1
-            else:
+            # 메시지별로 그 메시지가 실제로 담은 id만 기록한다. 3개 중 2개만
+            # 전달되면 2개분만 발송 완료가 되고 나머지는 다음 회차에 다시 시도된다
+            # (전체를 한 번에 기록하면 못 본 건이 영구 유실된다).
+            delivered_any = False
+            for message, delivered_ids in _format_messages(company["name"], matches):
+                if send_telegram_message(company["telegram_chat_id"], message):
+                    mark_sent(company_id, delivered_ids)
+                    delivered_any = True
+                    continue
                 # send_telegram_message logs status/detail but not chat_id (a Telegram
                 # personal identifier) or company_id - log our own internal id here to
                 # correlate the failure, matching worker/jobs/match_job.py's convention
@@ -152,6 +195,9 @@ def run() -> None:
                 logger.warning(
                     "digest: send failed for a company", extra={"company_id": company_id}
                 )
+                break
+            if delivered_any:
+                sent_count += 1
     except Exception:
         logger.exception("digest job failed entirely", extra={"job": "digest", "status": "failed"})
         return
