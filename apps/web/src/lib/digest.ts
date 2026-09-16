@@ -3,7 +3,7 @@ import "server-only";
 import { requireCompany, requireUser } from "@/lib/dal";
 import { createClient } from "@/lib/supabase/server";
 import type { OpportunitySummary } from "@/lib/opportunities";
-import { matchesWatch, type WatchCondition } from "@/lib/queue";
+import { hasWatchCriteria, matchesWatch, type WatchCondition } from "@/lib/queue";
 
 /**
  * "Watch 다이제스트": 이메일/슬랙 발송 인프라(공급자 API 키 등)가 이 프로젝트에 아직
@@ -38,7 +38,8 @@ export async function getWatchDigest(): Promise<WatchDigest> {
   if (watchError) throw new Error(`Failed to load watch conditions: ${watchError.message}`);
 
   const watches = (watchRows ?? []) as WatchCondition[];
-  if (watches.length === 0) {
+  const watchesWithCriteria = watches.filter(hasWatchCriteria);
+  if (watchesWithCriteria.length === 0) {
     return { windowHours: DIGEST_WINDOW_HOURS, activeWatchCount: 0, matches: [] };
   }
 
@@ -64,9 +65,9 @@ export async function getWatchDigest(): Promise<WatchDigest> {
   for (const item of (opportunities ?? []) as Omit<OpportunitySummary, "matchScore">[]) {
     const matchScore = matchById.get(item.id) ?? null;
     const summary: OpportunitySummary = { ...item, matchScore };
-    const watchNames = watches.filter((watch) => matchesWatch(summary, watch, matchScore)).map((w) => w.name);
+    const watchNames = watchesWithCriteria.filter((watch) => matchesWatch(summary, watch, matchScore)).map((w) => w.name);
     if (watchNames.length > 0) matches.push({ opportunity: summary, watchNames });
   }
 
-  return { windowHours: DIGEST_WINDOW_HOURS, activeWatchCount: watches.length, matches };
+  return { windowHours: DIGEST_WINDOW_HOURS, activeWatchCount: watchesWithCriteria.length, matches };
 }

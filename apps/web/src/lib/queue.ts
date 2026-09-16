@@ -61,6 +61,7 @@ export function matchesWatch(
   matchScore: number | null,
 ) {
   if (!watch.active) return false;
+  if (!hasWatchCriteria(watch)) return false;
   if (watch.category && opportunity.category !== watch.category) return false;
   if (watch.min_budget !== null && (opportunity.budget_amount ?? 0) < watch.min_budget) return false;
   if (watch.max_budget !== null && opportunity.budget_amount !== null && opportunity.budget_amount > watch.max_budget) {
@@ -73,6 +74,16 @@ export function matchesWatch(
     if (!haystack.includes(keyword)) return false;
   }
   return true;
+}
+
+export function hasWatchCriteria(watch: Pick<WatchCondition, "keyword" | "category" | "min_budget" | "max_budget" | "min_match_score">) {
+  return Boolean(
+    watch.keyword?.trim() ||
+      watch.category ||
+      watch.min_budget !== null ||
+      watch.max_budget !== null ||
+      watch.min_match_score !== null,
+  );
 }
 
 const REVISION_CHANGE_FIELDS = ["bid_close_at", "budget_amount", "region_restriction", "open_at"] as const;

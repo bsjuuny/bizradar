@@ -63,8 +63,8 @@ class TestMatchesWatch:
         watch = _watch(keyword="ai platform")
         assert digest_job._matches_watch(opp, watch, None) is True
 
-    def test_no_conditions_set_matches_anything(self):
-        assert digest_job._matches_watch(_opp(), _watch(), None) is True
+    def test_no_conditions_set_does_not_match_anything(self):
+        assert digest_job._matches_watch(_opp(), _watch(), None) is False
 
     def test_inactive_watch_never_matches(self):
         # get_active_watch_conditions() already filters active=true at the query
@@ -129,6 +129,25 @@ def test_run_skips_already_sent_opportunities(monkeypatch):
     )
 
     digest_job.run()  # must not raise / must not send
+
+
+def test_run_does_not_send_for_watch_without_criteria(monkeypatch):
+    companies = [{"id": "company-1", "name": "Acme", "telegram_chat_id": "111"}]
+    watches_by_company = {"company-1": [_watch(name="전체 알림 (테스트용)")]}
+    opportunities = [_opp(id_="opp-1")]
+
+    monkeypatch.setattr(digest_job, "get_companies_with_telegram", lambda: companies)
+    monkeypatch.setattr(digest_job, "get_active_watch_conditions", lambda ids: watches_by_company)
+    monkeypatch.setattr(digest_job, "get_recent_opportunities", lambda since: opportunities)
+    monkeypatch.setattr(digest_job, "get_match_scores", lambda cids, oids: {})
+    monkeypatch.setattr(digest_job, "get_already_sent", lambda cid, oids: set())
+    monkeypatch.setattr(
+        digest_job,
+        "send_telegram_message",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError()),
+    )
+
+    digest_job.run()
 
 
 def test_run_no_companies_with_telegram_is_a_noop(monkeypatch, caplog):

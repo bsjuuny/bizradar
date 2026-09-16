@@ -35,6 +35,16 @@ DIGEST_WINDOW_HOURS = 24
 MAX_ITEMS_PER_MESSAGE = 10
 
 
+def _has_watch_criteria(watch: dict[str, Any]) -> bool:
+    return (
+        bool((watch.get("keyword") or "").strip())
+        or watch.get("category") is not None
+        or watch.get("min_budget") is not None
+        or watch.get("max_budget") is not None
+        or watch.get("min_match_score") is not None
+    )
+
+
 def _matches_watch(
     opportunity: dict[str, Any], watch: dict[str, Any], match_score: float | None
 ) -> bool:
@@ -43,6 +53,8 @@ def _matches_watch(
     # apps/web/src/lib/queue.ts's matchesWatch (`if (!watch.active) return false`)
     # rather than silently depending on the caller having done it.
     if not watch.get("active"):
+        return False
+    if not _has_watch_criteria(watch):
         return False
     if watch.get("category") and opportunity.get("category") != watch["category"]:
         return False

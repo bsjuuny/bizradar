@@ -23,3 +23,8 @@ supabase/.branches/
 .DS_Store
 Thumbs.db
 .vscode/
+
+# Local dev server logs (apps/web/.local-web.*.log) - 수백 KB짜리 실행 로그라
+# 커밋 대상이 아니다. 무시 규칙이 없어 실제로 커밋될 뻔했다.
+*.local-web.out.log
+*.local-web.err.log
