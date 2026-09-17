@@ -15,7 +15,6 @@ from typing import Any, cast
 from worker.matching.engine import CompanyProfile, MatchScore, OpportunityRequirements
 from worker.repositories.opportunities import get_service_client
 
-
 # .in_() puts every id into the GET request's query string. Once project_analyses
 # accumulates enough SUCCESS rows, that id list makes the URL long enough that
 # Supabase's gateway rejects it outright with a plain-text 400 "Bad Request" (not

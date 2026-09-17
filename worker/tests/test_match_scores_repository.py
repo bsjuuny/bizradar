@@ -28,7 +28,12 @@ class _FakeResult:
 
 
 class _FakeQuery:
-    def __init__(self, table_name: str, opportunities_by_id: dict[str, dict[str, Any]], in_clause_sizes: list[int]):
+    def __init__(
+        self,
+        table_name: str,
+        opportunities_by_id: dict[str, dict[str, Any]],
+        in_clause_sizes: list[int],
+    ):
         self._table_name = table_name
         self._opportunities_by_id = opportunities_by_id
         self._in_clause_sizes = in_clause_sizes
@@ -47,9 +52,16 @@ class _FakeQuery:
     def execute(self) -> _FakeResult:
         if self._table_name == "project_analyses":
             return _FakeResult(
-                [{"opportunity_id": oid, "project_type": None, "technologies": [],
-                  "min_experience_years": None, "required_qualifications": []}
-                 for oid in self._opportunities_by_id]
+                [
+                    {
+                        "opportunity_id": oid,
+                        "project_type": None,
+                        "technologies": [],
+                        "min_experience_years": None,
+                        "required_qualifications": [],
+                    }
+                    for oid in self._opportunities_by_id
+                ]
             )
         assert self._requested_ids is not None, "opportunities_current queried without .in_()"
         self._in_clause_sizes.append(len(self._requested_ids))
@@ -72,7 +84,12 @@ def test_get_analyzed_opportunities_chunks_the_in_clause(monkeypatch):
     # result. This asserts every .in_() call stays within _IN_CLAUSE_CHUNK_SIZE and
     # that results from every chunk are still merged into the final return value.
     opportunities_by_id = {
-        f"opp-{i}": {"id": f"opp-{i}", "budget_amount": i, "region_restriction": None, "bid_close_at": None}
+        f"opp-{i}": {
+            "id": f"opp-{i}",
+            "budget_amount": i,
+            "region_restriction": None,
+            "bid_close_at": None,
+        }
         for i in range(match_scores._IN_CLAUSE_CHUNK_SIZE * 2 + 5)
     }
     fake_client = _FakeClient(opportunities_by_id)
