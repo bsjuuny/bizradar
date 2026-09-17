@@ -47,6 +47,12 @@ export type TodayQueue = {
   savedCount: number;
   respondingCount: number;
   watchConditions: WatchCondition[];
+  /**
+   * `items`를 걸러낸 Watch 이름들. 비어 있으면 필터를 걸지 않고 마감 임박 공고를 전부
+   * 보여준 것이다(쓸 수 있는 Watch가 없는 경우). 화면에서 "왜 목록이 줄었는지"를
+   * 설명하는 데 쓴다.
+   */
+  filteredByWatch: string[];
 };
 
 function isUrgent(item: QueueItem, now: Date): boolean {
@@ -223,7 +229,7 @@ export async function getTodayQueue(): Promise<TodayQueue> {
   const savedById = new Map((savedRows ?? []).map((row) => [row.opportunity_id, row as SavedOpportunity]));
   const watches = (watchRows ?? []) as WatchCondition[];
 
-  const items = ((opportunities ?? []) as Omit<OpportunitySummary, "matchScore">[])
+  const allItems = ((opportunities ?? []) as Omit<OpportunitySummary, "matchScore">[])
     .map((item) => {
       const matchScore = matchById.get(item.id) ?? null;
       const summary: OpportunitySummary = { ...item, matchScore };
@@ -246,6 +252,20 @@ export async function getTodayQueue(): Promise<TodayQueue> {
       return String(a.bid_close_at ?? "9999").localeCompare(String(b.bid_close_at ?? "9999"));
     });
 
+  // 저장한 Watch 조건으로 목록을 좁힌다. 예전에는 조건을 배지로만 달고 목록은 마감 임박
+  // 80건을 분류와 무관하게 그대로 보여줬다. 그래서 `category=LIKELY_IT` Watch를 걸어둔
+  // IT 회사가 열어도 80건 중 66건이 UNKNOWN(암반사면 정밀안전진단 용역, 궤도특수차 연간
+  // 소모품 교체 용역 등)으로 채워져 "조건이 안 맞는다"고 읽혔다 - 2026-09-17 실측.
+  //
+  // 쓸 수 있는 Watch가 하나도 없으면(미설정, 전부 일시중지, 조건이 빈 legacy 행) 필터를
+  // 걸지 않고 전부 보여준다. 그러지 않으면 큐가 통째로 비어서 아무것도 할 수 없게 된다.
+  // `matchesWatch`가 이미 active/조건유무를 자체 검사하지만, "필터를 걸 수 있는가"는
+  // 그것과 별개의 판단이라 여기서 명시적으로 센다.
+  const usableWatches = watches.filter((watch) => watch.active && hasWatchCriteria(watch));
+  const items = usableWatches.length > 0
+    ? allItems.filter((item) => item.watchMatches.length > 0)
+    : allItems;
+
   const urgentItems = items
     .filter((item) => isUrgent(item, now))
     .sort((a, b) => String(a.bid_close_at ?? "9999").localeCompare(String(b.bid_close_at ?? "9999")));
@@ -253,9 +273,13 @@ export async function getTodayQueue(): Promise<TodayQueue> {
   return {
     items,
     urgentItems,
-    savedCount: savedRows?.length ?? 0,
-    respondingCount: (savedRows ?? []).filter((row) => row.status === "RESPONDING").length,
+    // savedRows는 필터 전 80건 전체를 대상으로 조회한 것이라 그대로 쓰면 화면에 보이는
+    // 목록과 숫자가 어긋난다(가려진 비IT 공고까지 세게 된다). 실제로 보여주는 items에서
+    // 센다.
+    savedCount: items.filter((item) => item.saved).length,
+    respondingCount: items.filter((item) => item.saved?.status === "RESPONDING").length,
     watchConditions: watches,
+    filteredByWatch: usableWatches.map((watch) => watch.name),
   };
 }
 

@@ -154,6 +154,18 @@ export default async function QueuePage() {
         ))}
       </section>
 
+      {/* 목록이 왜 줄어들었는지 화면에서 바로 알 수 있게 한다. 조건을 배지로만 표시하던
+          시절엔 category=LIKELY_IT Watch를 걸어도 마감 임박 80건이 분류와 무관하게 다
+          떠서 "조건이 안 맞는다"고 읽혔다. 이제 반대 방향의 오해(목록이 왜 이렇게
+          적은지)가 생길 수 있으므로 필터가 걸려 있다는 사실과 해제 방법을 같이 알린다. */}
+      {queue.filteredByWatch.length > 0 && (
+        <p className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-900 dark:bg-blue-950 dark:text-blue-200">
+          Watch 조건(<span className="font-medium">{queue.filteredByWatch.join(", ")}</span>)에 맞는
+          공고만 보여주고 있습니다. 마감이 임박한 공고를 조건 없이 전부 보려면 오른쪽 Watch
+          Rules에서 일시중지하세요.
+        </p>
+      )}
+
       <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="flex flex-col gap-6">
           {queue.urgentItems.length > 0 && (
@@ -173,7 +185,23 @@ export default async function QueuePage() {
             )}
             {visibleItems.length === 0 && queue.urgentItems.length === 0 ? (
               <div className="rounded-xl border border-dashed border-border p-10 text-center text-sm text-muted-foreground">
-                No opportunities are ready for the queue yet.
+                {/* 필터 때문에 0건인 것과 정말로 볼 공고가 없는 것은 전혀 다른 상황이다.
+                    구분하지 않으면 조건을 좁게 걸어둔 사용자가 수집이 멈춘 줄로 읽는다. */}
+                {queue.filteredByWatch.length > 0 ? (
+                  <>
+                    <p>
+                      Watch 조건(
+                      <span className="font-medium">{queue.filteredByWatch.join(", ")}</span>)에
+                      맞는 공고가 아직 없습니다.
+                    </p>
+                    <p className="mt-1">
+                      조건이 너무 좁을 수 있습니다. 오른쪽 Watch Rules에서 일시중지하면 마감이
+                      임박한 공고를 조건 없이 전부 볼 수 있습니다.
+                    </p>
+                  </>
+                ) : (
+                  "No opportunities are ready for the queue yet."
+                )}
               </div>
             ) : (
               visibleItems.map((item) => <QueueCard key={item.id} item={item} />)
