@@ -179,11 +179,23 @@ keywords alone with **zero** `NON_IT` rows, so the leftover `UNKNOWN` rows in th
 are the keyword filter's blind spot rather than a different kind of contract. Classes that
 *look* IT but are genuinely mixed in real titles are deliberately excluded and listed with
 their reasons in `_IT_PROCUREMENT_CATEGORIES`' comment - `측량용역` (physical land
-surveying), `디지털콘텐츠개발서비스` (video/exhibition production), `데이터서비스` (mostly
-기록물 스캔 labor), `정보화교육서비스` (초등학교 컴퓨터교실 운영),
+surveying), `공간정보DB구축서비스` (the same surveying work under a GIS-sounding name),
+`디지털콘텐츠개발서비스` (video/exhibition production), `데이터서비스` (mostly 기록물 스캔
+labor), `정보화교육서비스` (초등학교 컴퓨터교실 운영),
 `정보통신설계용역`/`정보통신감리용역` (정보통신공사업 cabling work - the largest excluded
 bucket at 27 rows, flip it if 정보통신공사 counts as in-market), `유선/무선통신서비스`
 (회선 임차), and copier/printing classes.
+
+**That LIKELY_IT-rate statistic is necessary but not sufficient, and treating it as
+sufficient shipped a bug.** `공간정보DB구축서비스` passed it convincingly (60% LIKELY_IT,
+zero `NON_IT`) and was included in the first version; a user then reported obvious non-IT
+results. Reading the titles it actually promoted showed 토지적성평가용역, 공공측량 및
+도로대장 작성, 지하시설물도 작성, 지적재조사 도면정비, 맨홀 라이다 측량 - land-surveying
+contracts, exactly what `측량용역` is excluded for. The class was removed and 22 rows
+reverted to `UNKNOWN`; genuine geospatial IT still reaches `LIKELY_IT` via the `GIS` title
+keyword, so nothing real was lost. **Before adding a class, audit the rows it would promote
+on its own** - the ones where `classify(title)` alone is not `LIKELY_IT` but
+`classify(title, class)` is - and read those titles, rather than trusting the rate.
 
 **`category` is computed once, at collection time, so a rule-filter change does not touch
 rows already in the table** - they keep whatever the old rules gave them, and the
@@ -191,10 +203,11 @@ rows already in the table** - they keep whatever the old rules gave them, and th
 re-classify pass over the existing corpus (re-run `classify` over `opportunities`' `title`
 + `procurement_category` and update the differing rows; do it on the raw table, all
 revisions, since a superseded revision can become current again). Measured for the
-two-signal change above: 462 of 19,087 rows moved - 448 `UNKNOWN` -> `LIKELY_IT`
+two-signal change above: 440 of 19,087 rows moved - 426 `UNKNOWN` -> `LIKELY_IT`
 recoveries, plus 14 genuine false positives removed by the new `무대시스템`/`시스템에어컨`
 exceptions (festival stage rigging and HVAC equipment, where "시스템" had fused onto
-non-software kit).
+non-software kit). The first pass moved 462 rows; pulling `공간정보DB구축서비스` back out
+reverted 22 of them, which is the difference.
 
 `UNKNOWN` sampling for AI analysis is NOT_IMPLEMENTED - only `LIKELY_IT` reaches Ollama
 right now, which is exactly why a false negative here is invisible rather than merely

@@ -260,9 +260,10 @@ def test_system_air_conditioner_is_not_likely_it():
 
 
 def test_official_it_procurement_class_promotes_a_title_with_no_keyword():
-    # The filter's real blind spot, measured live: these are all genuine IT projects that
-    # title keywords miss entirely, sitting in UNKNOWN inside procurement classes that are
-    # 100% IT. ~403 live rows were in this state before the class signal was added.
+    # The filter's real blind spot: these are all genuine IT projects that title keywords
+    # miss entirely, sitting in UNKNOWN inside procurement classes that are 100% IT.
+    # Measured row counts live in docs/DATA_PIPELINE.md#project-filtering, not here, so
+    # this test doesn't go stale every time the corpus grows.
     cases = [
         ("전자결재 기안기 ActiveX 제거 사업", "정보시스템개발서비스"),
         ("2026년 소망챗 고도화(수의시담)", "정보시스템개발서비스"),
@@ -272,7 +273,6 @@ def test_official_it_procurement_class_promotes_a_title_with_no_keyword():
         ("2026년 교육재정본부 통합감리", "정보시스템감리서비스"),
         ("개인정보 영향평가 용역 사업", "정보화전략계획서비스"),
         ("2026년 ANSYS 프로그램 유지보수 용역", "소프트웨어유지및지원서비스"),
-        ("청송군 디지털 도로대장 구축", "공간정보DB구축서비스"),
         (
             "SW 3자단가(아라오피스 v1.0 (커스터마이징) 아라소프트(주))",
             "패키지소프트웨어개발및도입서비스",
@@ -310,8 +310,15 @@ def test_mixed_procurement_classes_are_not_promoted_wholesale():
     # Deliberately left out of the IT class list - each is genuinely mixed in real data,
     # so promoting the class would import non-IT work instead of recovering IT work. The
     # title signal still decides these.
+    #
+    # 공간정보DB구축서비스 is here because it was briefly IN the list and had to be pulled:
+    # its LIKELY_IT rate looked convincing (60%, zero NON_IT) but the titles it promoted
+    # were land-surveying work, and a user reported the false positives. Rate alone is not
+    # evidence - read the titles.
     cases = [
         ("신풍저수지 내용적 측량용역", "측량용역"),
+        ("거창군 토지적성평가 실시 용역", "공간정보DB구축서비스"),
+        ("2026년 파주시 공간정보(상수도) 변동자료 구축 용역", "공간정보DB구축서비스"),
         ("2026년 인문소양 원격연수 콘텐츠 이용 사업", "디지털콘텐츠개발서비스"),
         ("2026년 2차 입양기록물 디지털화(스캔) 용역사업", "데이터서비스"),
         ("마지초등학교 민간참여 컴퓨터교실 운영업체 선정 공고", "정보화교육서비스"),
@@ -319,6 +326,14 @@ def test_mixed_procurement_classes_are_not_promoted_wholesale():
     ]
     for title, procurement_category in cases:
         assert classify(title, procurement_category) == "UNKNOWN", title
+
+
+def test_excluding_the_spatial_db_class_still_keeps_genuine_gis_work():
+    # Dropping 공간정보DB구축서비스 from the class list costs nothing real: actual
+    # geospatial IT work says so in the title and matches the "GIS" keyword either way.
+    title = "창평처리분구 하수관로 정비사업 GIS DB 구축용역(입찰대행)"
+    assert classify(title, "공간정보DB구축서비스") == "LIKELY_IT"
+    assert classify(title) == "LIKELY_IT"
 
 
 def test_title_signal_still_fires_inside_a_non_it_procurement_class():

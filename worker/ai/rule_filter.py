@@ -37,14 +37,27 @@ Category = str  # "NON_IT" | "LIKELY_IT" | "UNKNOWN"
 # opportunities (2026-09-17), every class below already classified 60-78% LIKELY_IT from
 # title keywords alone with *zero* NON_IT rows, i.e. the keyword filter agrees with the
 # class wherever it manages to fire at all - the remaining UNKNOWN rows in these classes
-# are the filter's blind spot, not a genuinely different kind of contract. Together they
-# account for ~403 real IT notices that were sitting in UNKNOWN, invisible under the
-# "IT 관련" tab and never sent for AI analysis.
+# are the filter's blind spot, not a genuinely different kind of contract.
+#
+# That statistic alone is NOT sufficient evidence, though - it was how 공간정보DB구축서비스
+# (60% LIKELY_IT, 0 NON_IT) got in here at first, and a user then reported real non-IT
+# results. Reading its actual promoted titles showed 토지적성평가용역, 공공측량 및
+# 도로대장 작성, 지하시설물도 작성, 지적재조사 도면정비 - i.e. land-surveying work, the
+# very thing 측량용역 is excluded for. Before adding a class, read the titles it would
+# promote (see the audit approach in docs/DATA_PIPELINE.md#project-filtering), don't just
+# check its LIKELY_IT rate.
 #
 # Classes deliberately LEFT OUT despite looking IT-ish, each checked against its real
 # titles in the same dataset - all are genuinely mixed, so promoting them wholesale
 # would import non-IT work rather than recover IT work:
 #   측량용역              - physical land surveying (저수지 내용적, 배수개선 측량)
+#   공간정보DB구축서비스     - same land-surveying work as 측량용역 above, just filed under
+#                          a GIS-sounding class name. Was briefly included and removed
+#                          after a user reported the false positives; of the 22 rows it
+#                          promoted, the bulk were 토지적성평가/공공측량/지하시설물도
+#                          작성/지적재조사. Genuine geospatial IT here still lands on
+#                          LIKELY_IT through the "GIS" title keyword ("하수관로 정비사업
+#                          GIS DB 구축용역"), so excluding the class loses nothing real.
 #   디지털콘텐츠개발서비스   - video/exhibition/교육 콘텐츠 production, not software
 #   데이터서비스           - largely 기록물 정리·스캔 digitization labor
 #   정보화교육서비스        - 초등학교 컴퓨터교실 운영 (an education service)
@@ -69,7 +82,6 @@ _IT_PROCUREMENT_CATEGORIES = frozenset(
         "클라우드서비스",
         "클라우드지원서비스",
         "클라우드융합서비스",
-        "공간정보DB구축서비스",
         "정보통신연구조사서비스",
         "전산장비유지관리서비스",
     }
