@@ -153,17 +153,52 @@ normalized input.
 
 ## Project filtering (implemented, Phase 4)
 
-`worker/ai/rule_filter.py:classify(title)` buckets every G2B title into `NON_IT` /
-`LIKELY_IT` / `UNKNOWN` - called from `G2BCollector.normalize()` at collection time
-(not a separate job), so `opportunities.category` is set the moment a row is written.
-Keyword-based, biased toward `LIKELY_IT` on purpose: a false positive costs one wasted
-~60s Ollama call, a false negative silently drops a real IT opportunity, which is the
-worse failure for a product whose job is finding IT projects. Verified against every
-title in `fixtures/g2b/bid_list_servc_sample.json` (real data) before shipping,
-including a case where data.go.kr's own official classification (`pubPrcrmntLrgClsfcNm`)
-mis-tagged a cybersecurity cert-testing project as "학술연구 및 기타 서비스" - the keyword
-filter catches it anyway. `UNKNOWN` sampling for AI analysis is NOT_IMPLEMENTED - only
-`LIKELY_IT` reaches Ollama right now.
+`worker/ai/rule_filter.py:classify(title, procurement_category)` buckets every G2B notice
+into `NON_IT` / `LIKELY_IT` / `UNKNOWN` - called from `G2BCollector.normalize()` at
+collection time (not a separate job), so `opportunities.category` is set the moment a row
+is written. Biased toward `LIKELY_IT` on purpose: a false positive costs one wasted ~60s
+Ollama call, a false negative silently drops a real IT opportunity, which is the worse
+failure for a product whose job is finding IT projects.
+
+Two independent signals, in this order:
+
+1. **G2B's own procurement classification** (`pubPrcrmntClsfcNm` ->
+   `procurement_category`), when it is one of the unambiguously information-systems
+   classes in `_IT_PROCUREMENT_CATEGORIES`. An agency picked this from a controlled list,
+   so it outranks anything inferred from title wording - including the non-IT keyword
+   list (a 정보시스템개발서비스 contract that mentions 급식 is still IT). This is the only
+   signal that catches an IT project whose title contains no technology word at all.
+2. **Title keyword substrings**, for the many real IT notices whose official class is a
+   generic catch-all (`기타기술용역`, `기타사업지원서비스`) or is outright wrong - e.g.
+   data.go.kr tagged "양자내성암호 시범전환 사업 공인시험 위탁" as "학술연구 및 기타 서비스";
+   the keywords catch it anyway. The class signal only ever *promotes*, never suppresses.
+
+The class list was picked from measured data, not intuition (2026-09-17, all 15,944 live
+current opportunities): every class in it already classified 60-78% `LIKELY_IT` from title
+keywords alone with **zero** `NON_IT` rows, so the leftover `UNKNOWN` rows in those classes
+are the keyword filter's blind spot rather than a different kind of contract. Classes that
+*look* IT but are genuinely mixed in real titles are deliberately excluded and listed with
+their reasons in `_IT_PROCUREMENT_CATEGORIES`' comment - `측량용역` (physical land
+surveying), `디지털콘텐츠개발서비스` (video/exhibition production), `데이터서비스` (mostly
+기록물 스캔 labor), `정보화교육서비스` (초등학교 컴퓨터교실 운영),
+`정보통신설계용역`/`정보통신감리용역` (정보통신공사업 cabling work - the largest excluded
+bucket at 27 rows, flip it if 정보통신공사 counts as in-market), `유선/무선통신서비스`
+(회선 임차), and copier/printing classes.
+
+**`category` is computed once, at collection time, so a rule-filter change does not touch
+rows already in the table** - they keep whatever the old rules gave them, and the
+`/opportunities` "IT 관련" tab keeps showing the old answer. Any change here needs a
+re-classify pass over the existing corpus (re-run `classify` over `opportunities`' `title`
++ `procurement_category` and update the differing rows; do it on the raw table, all
+revisions, since a superseded revision can become current again). Measured for the
+two-signal change above: 462 of 19,087 rows moved - 448 `UNKNOWN` -> `LIKELY_IT`
+recoveries, plus 14 genuine false positives removed by the new `무대시스템`/`시스템에어컨`
+exceptions (festival stage rigging and HVAC equipment, where "시스템" had fused onto
+non-software kit).
+
+`UNKNOWN` sampling for AI analysis is NOT_IMPLEMENTED - only `LIKELY_IT` reaches Ollama
+right now, which is exactly why a false negative here is invisible rather than merely
+imprecise: an IT notice left `UNKNOWN` is never analyzed and never scored.
 
 ## AI provider (implemented, Phase 4: OllamaProvider)
 

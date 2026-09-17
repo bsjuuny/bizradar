@@ -262,10 +262,14 @@ class G2BCollector(BaseCollector[G2BNormalizedOpportunity]):
     def normalize(self, raw: RawRecord) -> G2BNormalizedOpportunity:
         item = raw.payload
         title = (item.get("bidNtceNm") or "").strip()
+        # Hoisted out of the constructor below because the rule filter reads it too: G2B's
+        # own 조달분류명 is a stronger IT signal than title keywords (see
+        # worker/ai/rule_filter.py and docs/DATA_PIPELINE.md#project-filtering).
+        procurement_category = item.get("pubPrcrmntClsfcNm") or None
         return G2BNormalizedOpportunity(
             external_id=raw.external_id,
             title=title,
-            category=classify(title),
+            category=classify(title, procurement_category),
             organization=item.get("ntceInsttNm") or None,
             demand_organization=item.get("dminsttNm") or None,
             budget_amount=_parse_amount(item.get("asignBdgtAmt")),
@@ -282,7 +286,7 @@ class G2BCollector(BaseCollector[G2BNormalizedOpportunity]):
             ntce_kind_nm=item.get("ntceKindNm") or None,
             industry_limited=_parse_yn(item.get("indstrytyLmtYn")),
             participation_limited=_parse_yn(item.get("bidPrtcptLmtYn")),
-            procurement_category=item.get("pubPrcrmntClsfcNm") or None,
+            procurement_category=procurement_category,
         )
 
     def validate(self, normalized: G2BNormalizedOpportunity) -> bool:

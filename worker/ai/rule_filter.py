@@ -1,19 +1,79 @@
-"""Rule filter: buckets a G2B title into NON_IT / LIKELY_IT / UNKNOWN before any LLM
+"""Rule filter: buckets a G2B notice into NON_IT / LIKELY_IT / UNKNOWN before any LLM
 call touches it (section 21 of the original spec - the full feed never goes to Ollama).
+
+Two independent signals, checked in this order:
+
+1. G2B's own procurement classification (`pubPrcrmntClsfcNm` -> `procurement_category`),
+   when it is one of the unambiguously information-systems classes in
+   `_IT_PROCUREMENT_CATEGORIES`. This is a structured field the agency itself picked from
+   a controlled list, so it is far more reliable than guessing from the title - and it is
+   the only signal that catches an IT project whose title contains no technology word at
+   all ("전자결재 기안기 ActiveX 제거 사업", "2026년 소망챗 고도화", "K-에듀파인 운영환경
+   고도화 및 재해복구 체계 구축").
+2. Keyword substring matching on the title, for the many real IT notices whose official
+   classification is a generic catch-all ("기타기술용역", "기타사업지원서비스") or is
+   outright wrong - e.g. data.go.kr tagged "양자내성암호 시범전환 사업 공인시험 위탁" as
+   "학술연구 및 기타 서비스 용역"; the title keywords catch it anyway.
 
 Biased toward inclusion on purpose: a false positive here costs one wasted ~60s Ollama
 call; a false negative means a real IT opportunity never reaches a user at all, which is
 the worse failure mode for a product whose whole point is "find IT projects". So an IT
-keyword match wins even if a non-IT keyword also matches, and the non-IT list only
-contains terms specific enough that they're essentially never IT-related (school trips,
-facility cleaning, catering, ...) - not generic contract words like "유지보수" or "구축"
-that show up in both IT and non-IT announcements.
+signal wins even if a non-IT keyword also matches, and the non-IT list only contains
+terms specific enough that they're essentially never IT-related (school trips, facility
+cleaning, catering, ...) - not generic contract words like "유지보수" or "구축" that show
+up in both IT and non-IT announcements.
 
 Verified against every title in fixtures/g2b/bid_list_servc_sample.json (real G2B data,
-not synthetic) before this shipped - see worker/tests/test_rule_filter.py.
+not synthetic) and, for the procurement-class signal, against all 15,944 live current
+opportunities - see worker/tests/test_rule_filter.py.
 """
 
 Category = str  # "NON_IT" | "LIKELY_IT" | "UNKNOWN"
+
+# G2B 조달분류명 values that are unambiguously information-systems work, so the class
+# alone is enough to route the notice to LIKELY_IT no matter how its title reads.
+#
+# Chosen from real data, not intuition: measured across all 15,944 live current
+# opportunities (2026-09-17), every class below already classified 60-78% LIKELY_IT from
+# title keywords alone with *zero* NON_IT rows, i.e. the keyword filter agrees with the
+# class wherever it manages to fire at all - the remaining UNKNOWN rows in these classes
+# are the filter's blind spot, not a genuinely different kind of contract. Together they
+# account for ~403 real IT notices that were sitting in UNKNOWN, invisible under the
+# "IT 관련" tab and never sent for AI analysis.
+#
+# Classes deliberately LEFT OUT despite looking IT-ish, each checked against its real
+# titles in the same dataset - all are genuinely mixed, so promoting them wholesale
+# would import non-IT work rather than recover IT work:
+#   측량용역              - physical land surveying (저수지 내용적, 배수개선 측량)
+#   디지털콘텐츠개발서비스   - video/exhibition/교육 콘텐츠 production, not software
+#   데이터서비스           - largely 기록물 정리·스캔 digitization labor
+#   정보화교육서비스        - 초등학교 컴퓨터교실 운영 (an education service)
+#   정보통신설계용역/정보통신감리용역 - 정보통신공사업 cabling design/supervision, i.e.
+#                          construction-adjacent rather than software (the single
+#                          biggest excluded bucket, 27 rows - flip it if 정보통신공사
+#                          counts as in-market)
+#   유선통신서비스/무선통신서비스 - 회선 임차 (telecom line rental)
+#   디지털인쇄물제작서비스/사무용기기임대서비스 - printing and copier leasing
+_IT_PROCUREMENT_CATEGORIES = frozenset(
+    {
+        "정보시스템개발서비스",
+        "정보시스템유지관리서비스",
+        "정보시스템감리서비스",
+        "정보인프라구축서비스",
+        "정보화전략계획서비스",
+        "정보화프로젝트관리서비스(PMO)",
+        "패키지소프트웨어개발및도입서비스",
+        "소프트웨어유지및지원서비스",
+        "컴퓨터네트워크또는인터넷보안서비스",
+        "인터넷지원개발서비스",
+        "클라우드서비스",
+        "클라우드지원서비스",
+        "클라우드융합서비스",
+        "공간정보DB구축서비스",
+        "정보통신연구조사서비스",
+        "전산장비유지관리서비스",
+    }
+)
 
 _IT_KEYWORDS = [
     "시스템",
@@ -134,6 +194,17 @@ _IT_KEYWORD_EXCEPTIONS = [
     # not implementation of data-security software (live original + re-notice pair).
     "농식품 분야 글로벌 R&D 전략 수립 및 네트워크",  # a research/collaboration network,
     # not a computer network (id 8face869, procurement category 기타연구조사서비스).
+    "시스템에어컨",  # a retail product category for ceiling-cassette air conditioners -
+    # "시스템" fuses onto HVAC equipment in routine facility contracts. Confirmed live in
+    # 기타사업지원서비스: "부경대학교 창의관 시스템에어컨 통합시스템 구축".
+    "무대시스템",  # festival/performance stage rigging (lighting, sound, truss), not
+    # software - confirmed live across several 축제·행사 notices whose procurement class
+    # is 축제기획및대행서비스 / 기타행사기획및대행서비스, e.g. "제72회 백제문화제
+    # 「무대시스템 설치 및 주제공연 제작」운영 용역", "제16회 팔공산 승시 무대시스템 및
+    # 부스설치".
+    "무대 시스템",  # the spaced variant of 무대시스템 above - exceptions are plain
+    # substrings, so both spellings have to be listed. Confirmed live: "2026 강경국가유산
+    # 야행 무대 시스템 임차 및 운영 용역".
 ]
 
 _NON_IT_KEYWORDS = [
@@ -160,7 +231,28 @@ _NON_IT_KEYWORDS = [
 ]
 
 
-def classify(title: str) -> Category:
+def _is_it_procurement_category(procurement_category: str | None) -> bool:
+    if not procurement_category:
+        return False
+    # G2B sometimes pads or re-spaces these values; compare with all whitespace removed
+    # so a stray space can't silently drop a notice back into UNKNOWN. Every entry in
+    # _IT_PROCUREMENT_CATEGORIES is already space-free.
+    return "".join(procurement_category.split()) in _IT_PROCUREMENT_CATEGORIES
+
+
+def classify(title: str, procurement_category: str | None = None) -> Category:
+    """Bucket a notice using G2B's own procurement class first, then title keywords.
+
+    `procurement_category` is optional so callers that genuinely have no classification
+    (non-G2B sources, older tests) keep the previous title-only behaviour unchanged.
+    """
+    # Checked before the keyword lists on purpose: an agency-assigned classification from
+    # a controlled list beats anything inferred from title wording, and it must also beat
+    # the non-IT keywords - a 정보시스템개발서비스 contract that happens to mention 급식
+    # is still an IT contract.
+    if _is_it_procurement_category(procurement_category):
+        return "LIKELY_IT"
+
     stripped = title
     for exception in _IT_KEYWORD_EXCEPTIONS:
         stripped = stripped.replace(exception, "")

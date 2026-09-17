@@ -233,6 +233,113 @@ def test_research_collaboration_network_is_not_a_computer_network():
     assert classify(title) == "UNKNOWN"
 
 
+def test_stage_system_is_not_likely_it():
+    # "무대시스템"/"무대 시스템" is festival stage rigging (lighting/sound/truss), not
+    # software - confirmed live across 축제·행사 notices. Both spellings appear, so both
+    # are listed as exceptions. What matters in every case is that none of them is
+    # LIKELY_IT; the 백제문화제 one lands on NON_IT rather than UNKNOWN because it also
+    # says "주제공연", and "공연" is already a non-IT keyword - a strictly better answer.
+    cases = [
+        ("제72회 백제문화제「무대시스템 설치 및 주제공연 제작」운영 용역", "NON_IT"),
+        (
+            "2026 강경국가유산야행 무대 시스템 임차 및 운영 용역 소액수의 견적 제출 안내 공고",
+            "UNKNOWN",
+        ),
+        ("제16회 팔공산 승시 무대시스템 및 부스설치", "UNKNOWN"),
+    ]
+    for title, expected in cases:
+        assert classify(title) == expected, title
+
+
+def test_system_air_conditioner_is_not_likely_it():
+    # "시스템에어컨" is an HVAC product category; "시스템" fuses onto facility equipment.
+    assert classify("본관 시스템에어컨 교체 및 설치 용역") == "UNKNOWN"
+
+
+# --- G2B's own procurement classification (pubPrcrmntClsfcNm) as a second signal -------
+
+
+def test_official_it_procurement_class_promotes_a_title_with_no_keyword():
+    # The filter's real blind spot, measured live: these are all genuine IT projects that
+    # title keywords miss entirely, sitting in UNKNOWN inside procurement classes that are
+    # 100% IT. ~403 live rows were in this state before the class signal was added.
+    cases = [
+        ("전자결재 기안기 ActiveX 제거 사업", "정보시스템개발서비스"),
+        ("2026년 소망챗 고도화(수의시담)", "정보시스템개발서비스"),
+        ("경력개발지원을 위한 대국민 잡케어 고도화 사업", "정보시스템개발서비스"),
+        ("근로복지공단 울산병원 응용프로그램 유지관리 위탁 사업", "정보시스템유지관리서비스"),
+        ("K-에듀파인 운영환경 고도화 및 재해복구 체계 구축", "정보인프라구축서비스"),
+        ("2026년 교육재정본부 통합감리", "정보시스템감리서비스"),
+        ("개인정보 영향평가 용역 사업", "정보화전략계획서비스"),
+        ("2026년 ANSYS 프로그램 유지보수 용역", "소프트웨어유지및지원서비스"),
+        ("청송군 디지털 도로대장 구축", "공간정보DB구축서비스"),
+        (
+            "SW 3자단가(아라오피스 v1.0 (커스터마이징) 아라소프트(주))",
+            "패키지소프트웨어개발및도입서비스",
+        ),
+        ("디지털서비스_레드휘슬_레드휘슬 공공 헬프라인", "클라우드서비스"),
+        (
+            "HRDK 국가정보통신서비스 사업자 선정 사업(제2사업자)",
+            "컴퓨터네트워크또는인터넷보안서비스",
+        ),
+    ]
+    for title, procurement_category in cases:
+        assert classify(title, procurement_category) == "LIKELY_IT", title
+
+
+def test_official_it_procurement_class_beats_a_non_it_keyword():
+    # An agency-assigned class from a controlled list outranks title wording, including
+    # the non-IT keyword list - a 정보시스템개발서비스 contract that mentions 급식 is
+    # still an IT contract.
+    title = "학교 급식 관리 시스템 재구축 용역"
+    assert classify(title, "정보시스템개발서비스") == "LIKELY_IT"
+
+
+def test_procurement_class_match_tolerates_stray_whitespace():
+    # G2B occasionally pads/re-spaces these values; a stray space must not silently drop
+    # the notice back into UNKNOWN.
+    assert classify("무인민원발급기 편의기능 업그레이드 용역", " 정보시스템유지관리서비스 ") == (
+        "LIKELY_IT"
+    )
+    assert classify("무인민원발급기 편의기능 업그레이드 용역", "정보시스템 유지관리서비스") == (
+        "LIKELY_IT"
+    )
+
+
+def test_mixed_procurement_classes_are_not_promoted_wholesale():
+    # Deliberately left out of the IT class list - each is genuinely mixed in real data,
+    # so promoting the class would import non-IT work instead of recovering IT work. The
+    # title signal still decides these.
+    cases = [
+        ("신풍저수지 내용적 측량용역", "측량용역"),
+        ("2026년 인문소양 원격연수 콘텐츠 이용 사업", "디지털콘텐츠개발서비스"),
+        ("2026년 2차 입양기록물 디지털화(스캔) 용역사업", "데이터서비스"),
+        ("마지초등학교 민간참여 컴퓨터교실 운영업체 선정 공고", "정보화교육서비스"),
+        ("공단 업무용 복합기 임차", "사무용기기임대서비스"),
+    ]
+    for title, procurement_category in cases:
+        assert classify(title, procurement_category) == "UNKNOWN", title
+
+
+def test_title_signal_still_fires_inside_a_non_it_procurement_class():
+    # The class signal only ever promotes; it never suppresses. Generic catch-all classes
+    # ("기타기술용역", "기타사업지원서비스") carry plenty of real IT work, which is why the
+    # keyword pass is still needed - data.go.kr's own classification is sometimes simply
+    # wrong.
+    assert classify("민자도로 미납통행료 통합관리시스템 유지보수 및 기능개선", "기타기술용역") == (
+        "LIKELY_IT"
+    )
+    assert classify("양자내성암호 시범전환 사업 공인시험 위탁", "기타사업지원서비스") == "LIKELY_IT"
+
+
+def test_absent_procurement_class_keeps_title_only_behaviour():
+    # Callers with no classification at all (non-G2B sources, existing call sites) must
+    # behave exactly as before.
+    assert classify("2026년 도로 포장 공사 감리 용역", None) == "UNKNOWN"
+    assert classify("정보시스템 구축 용역", None) == "LIKELY_IT"
+    assert classify("수학여행 위탁용역", "") == "NON_IT"
+
+
 def test_exception_phrase_does_not_hide_a_separate_real_it_keyword():
     # Exceptions remove only the confirmed non-IT phrase. A genuine technology keyword
     # elsewhere must still route the opportunity to IT.
