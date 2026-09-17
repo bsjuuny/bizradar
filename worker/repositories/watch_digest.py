@@ -72,7 +72,14 @@ def get_recent_opportunities(since: datetime, limit: int = 200) -> list[dict[str
     return cast(
         "list[dict[str, Any]]",
         client.table("opportunities_current")
-        .select("id, title, category, organization, budget_amount, posted_at, bid_close_at")
+        # industry_limited/participation_limited/region_restriction는 진입장벽 표시용이다.
+        # 셋 다 tri-state(true/false/null)이고 null은 "공고에 명시 안 됨"이라 "제한 없음"과
+        # 구분해야 한다 - apps/web/src/lib/market.ts의 분류 규약과 같은 의미로 쓴다.
+        .select(
+            "id, title, category, organization, demand_organization, budget_amount, "
+            "posted_at, bid_close_at, source_url, procurement_category, "
+            "industry_limited, participation_limited, region_restriction"
+        )
         .gte("posted_at", since.isoformat())
         .order("posted_at", desc=True)
         .limit(limit)

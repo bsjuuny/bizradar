@@ -24,8 +24,39 @@ export type OpportunitySummary = {
   budget_amount: number | null;
   posted_at: string | null;
   bid_close_at: string | null;
+  // 입찰 진입장벽. 셋 다 tri-state이고 null은 "공고에 명시 안 됨"이라 "제한 없음"과
+  // 구분해야 한다 - lib/market.ts의 분류 규약과 같은 의미다. 이 타입을 공유하는
+  // 모든 조회(getOpportunities / queue.ts / digest.ts)가 함께 select해야 한다.
+  industry_limited: boolean | null;
+  participation_limited: boolean | null;
+  region_restriction: string | null;
   matchScore: number | null;
 };
+
+// 목록/큐/다이제스트가 공유하는 select 컬럼. 한 곳만 늘리고 다른 곳을 빠뜨리면
+// OpportunitySummary 캐스팅이 거짓말을 해서(런타임 undefined) 배지가 잘못 뜬다.
+//
+// 반드시 연결(+) 없는 단일 리터럴 + `as const`로 둘 것: supabase-js는 select 문자열을
+// 리터럴 타입으로 파싱해 행 타입을 추론한다. 문자열을 이어붙이면 타입이 `string`으로
+// 넓혀져 파서가 포기하고 `GenericStringError`를 돌려주며, 그 결과 item.id 접근과
+// 스프레드가 전부 타입 오류가 된다(실제로 한 번 겪음).
+export const OPPORTUNITY_SUMMARY_COLUMNS =
+  "id, title, category, organization, budget_amount, posted_at, bid_close_at, industry_limited, participation_limited, region_restriction" as const;
+
+/**
+ * 업종제한도 지역제한도 없는 공고인지 - "누구나 지원 가능"의 판정 기준.
+ *
+ * tri-state에서 `null`은 "공고에 명시 안 됨"이지 "제한 없음"이 아니다. 명시되지 않은
+ * 것을 누구나 지원 가능으로 보여주면, 실제로는 자격이 안 되는 공고를 권하게 된다.
+ * 그래서 `=== false`로만 인정한다. 참가제한은 실측상 98%가 false라 변별력이 없어
+ * 판정에서 빼고 표시용으로만 쓴다(2026-09-17 기준 최근 7일 2,416건 측정).
+ */
+export function isOpenToAll(
+  opportunity: Pick<OpportunitySummary, "industry_limited" | "region_restriction">,
+): boolean {
+  if (opportunity.industry_limited !== false) return false;
+  return (opportunity.region_restriction ?? "").trim().length === 0;
+}
 
 export type TechnologyMatch = {
   name: string;
@@ -157,9 +188,7 @@ export async function getOpportunities({
   // opportunities table, which keeps every historical revision.
   let query = supabase
     .from("opportunities_current")
-    .select("id, title, category, organization, budget_amount, posted_at, bid_close_at", {
-      count: "exact",
-    })
+    .select(OPPORTUNITY_SUMMARY_COLUMNS, { count: "exact" })
     .order(safeSort, { ascending: safeDir === "asc", nullsFirst: false })
     .order("id", { ascending: true }) // tiebreaker for a stable order across pages
     .range(from, to);

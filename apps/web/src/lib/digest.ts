@@ -2,7 +2,7 @@ import "server-only";
 
 import { requireCompany, requireUser } from "@/lib/dal";
 import { createClient } from "@/lib/supabase/server";
-import type { OpportunitySummary } from "@/lib/opportunities";
+import { OPPORTUNITY_SUMMARY_COLUMNS, type OpportunitySummary } from "@/lib/opportunities";
 import { hasWatchCriteria, matchesWatch, type WatchCondition } from "@/lib/queue";
 
 /**
@@ -46,7 +46,7 @@ export async function getWatchDigest(): Promise<WatchDigest> {
   const since = new Date(Date.now() - DIGEST_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
   const { data: opportunities, error: opportunityError } = await supabase
     .from("opportunities_current")
-    .select("id, title, category, organization, budget_amount, posted_at, bid_close_at")
+    .select(OPPORTUNITY_SUMMARY_COLUMNS)
     .gte("posted_at", since)
     .order("posted_at", { ascending: false })
     .limit(DIGEST_LOOKBACK_LIMIT);

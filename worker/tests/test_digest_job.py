@@ -1,4 +1,5 @@
 import logging
+from types import SimpleNamespace
 
 from worker.jobs import digest_job
 
@@ -30,6 +31,17 @@ def _watch(name="My Watch", **overrides):
     }
     watch.update(overrides)
     return watch
+
+
+def _patch_settings(monkeypatch, web_base_url=None):
+    """run()이 로컬 .env.worker를 읽지 않도록 고정한다.
+
+    WEB_BASE_URL은 개발자 머신마다 다르게 채워져 있어서, 그대로 두면 "그 외 N건"
+    문구가 로컬 파일 내용에 따라 달라지고 테스트가 환경에 의존하게 된다.
+    """
+    monkeypatch.setattr(
+        digest_job, "get_settings", lambda: SimpleNamespace(web_base_url=web_base_url)
+    )
 
 
 class TestMatchesWatch:
@@ -176,9 +188,63 @@ def test_run_does_not_raise_when_repository_fails(monkeypatch, caplog):
     assert any("digest job failed entirely" in r.message for r in caplog.records)
 
 
+def test_digest_is_capped_and_uncapped_items_are_not_marked_sent(monkeypatch):
+    """상한을 넘긴 건은 "그 외 N건"으로만 알리고 발송 완료로 기록하지 않는다.
+
+    예전 구현은 10건만 싣고 매칭 전체를 mark_sent에 넘겨서, 못 본 건이 다음 회차에
+    already_sent로 걸러지며 영구 유실됐다. 상한을 다시 도입하면서 같은 실수를
+    반복하지 않는지가 이 테스트의 핵심이다.
+    """
+    monkeypatch.setattr(digest_job, "MAX_ITEMS_PER_DIGEST", 5)
+    _patch_settings(monkeypatch)
+    companies = [{"id": "company-1", "name": "Acme", "telegram_chat_id": "111"}]
+    watches_by_company = {"company-1": [_watch(name="IT watch", category="LIKELY_IT")]}
+    opportunities = [
+        _opp(id_=f"opp-{n}", title=f"공고 {n}", category="LIKELY_IT") for n in range(28)
+    ]
+
+    monkeypatch.setattr(digest_job, "get_companies_with_telegram", lambda: companies)
+    monkeypatch.setattr(digest_job, "get_active_watch_conditions", lambda ids: watches_by_company)
+    monkeypatch.setattr(digest_job, "get_recent_opportunities", lambda since: opportunities)
+    monkeypatch.setattr(digest_job, "get_match_scores", lambda cids, oids: {})
+    monkeypatch.setattr(digest_job, "get_already_sent", lambda cid, oids: set())
+
+    sent_messages: list[str] = []
+    monkeypatch.setattr(
+        digest_job,
+        "send_telegram_message",
+        lambda chat_id, text: sent_messages.append(text) or True,
+    )
+    marked: list[str] = []
+    monkeypatch.setattr(digest_job, "mark_sent", lambda cid, oids: marked.extend(oids))
+
+    digest_job.run()
+
+    body = "\n".join(sent_messages)
+    assert body.count("▸ ") == 5
+    assert "23건 더 있어요" in body
+    # 못 실은 23건은 어디에도 기록되지 않아야 한다 - 기록되면 다시는 안 나온다.
+    assert len(marked) == 5
+
+
+def test_open_to_all_items_are_ranked_into_the_capped_digest(monkeypatch):
+    # 진입장벽 없는 공고가 상한 안에 들어와야 후킹 포인트가 실제로 보인다.
+    monkeypatch.setattr(digest_job, "MAX_ITEMS_PER_DIGEST", 2)
+    restricted = [(_opp(id_=f"limited-{n}", title=f"제한 {n}"), ["W"]) for n in range(5)]
+    for opportunity, _ in restricted:
+        opportunity["industry_limited"] = True
+    open_one = _opp(id_="open-1", title="누구나 가능")
+    open_one["industry_limited"] = False
+    open_one["region_restriction"] = None
+
+    ranked = sorted([*restricted, (open_one, ["W"])], key=digest_job._rank_key)
+
+    assert ranked[0][0]["id"] == "open-1"
+
+
 def test_all_matches_are_listed_across_messages_without_truncation(monkeypatch):
-    # 예전 동작: 상위 10건만 싣고 "...외 N건"으로 뭉갠 뒤 전체를 mark_sent에 넘겨,
-    # 잘린 건들이 한 번도 안 보인 채 발송 완료로 기록됐다.
+    # 상한 안에서는 길이 때문에 잘리는 일이 없어야 한다 - 상한을 올려 분할만 검증한다.
+    monkeypatch.setattr(digest_job, "MAX_ITEMS_PER_DIGEST", 100)
     companies = [{"id": "company-1", "name": "Acme", "telegram_chat_id": "111"}]
     watches_by_company = {"company-1": [_watch(name="IT watch", category="LIKELY_IT")]}
     opportunities = [
@@ -203,11 +269,44 @@ def test_all_matches_are_listed_across_messages_without_truncation(monkeypatch):
     digest_job.run()
 
     body = "\n".join(sent_messages)
-    for n in range(40):
-        assert f"공고 {n} " in body
+    # 부분 문자열로 세면 "공고 1"이 "공고 10"에도 걸려 모호하다. 항목 접두사 개수로 센다.
+    assert body.count("▸ ") == 40
     assert "...외" not in body
     assert sorted(marked) == sorted(o["id"] for o in opportunities)
     assert all(len(text) <= digest_job.MAX_MESSAGE_CHARS for text in sent_messages)
+
+
+def test_single_watch_name_moves_to_the_header_instead_of_every_line():
+    # Watch가 하나뿐이면 항목마다 같은 이름이 반복될 뿐 정보가 없다(실측 28건 전부 동일).
+    matches = [(_opp(id_=f"opp-{n}", title=f"공고 {n}"), ["IT watch"]) for n in range(5)]
+    body, _ = digest_job._format_messages("Acme", matches)[0]
+
+    assert "🔔 Watch: IT watch" in body
+    assert body.count("IT watch") == 1
+
+
+def test_multiple_watch_names_stay_on_each_line():
+    # 여러 Watch가 걸리면 어느 조건에 걸렸는지가 항목마다 실제 정보가 된다.
+    matches = [
+        (_opp(id_="opp-1", title="공고 1"), ["IT watch"]),
+        (_opp(id_="opp-2", title="공고 2"), ["예산 watch"]),
+    ]
+    body, _ = digest_job._format_messages("Acme", matches)[0]
+
+    assert "🔔 Watch:" not in body
+    assert "🔔 IT watch" in body
+    assert "🔔 예산 watch" in body
+
+
+def test_open_to_all_badge_only_when_both_limits_are_explicitly_absent():
+    # null은 "공고에 명시 안 됨"이지 "제한 없음"이 아니다 - 명시되지 않은 것을 누구나
+    # 지원 가능으로 보여주면 자격이 안 되는 공고를 권하게 된다.
+    assert digest_job._is_open_to_all({"industry_limited": False, "region_restriction": None})
+    assert not digest_job._is_open_to_all({"industry_limited": None, "region_restriction": None})
+    assert not digest_job._is_open_to_all({"industry_limited": True, "region_restriction": None})
+    assert not digest_job._is_open_to_all(
+        {"industry_limited": False, "region_restriction": "본사소재지"}
+    )
 
 
 def test_a_single_oversized_item_still_gets_its_own_message(monkeypatch):
@@ -221,6 +320,7 @@ def test_a_single_oversized_item_still_gets_its_own_message(monkeypatch):
 
 def test_partial_delivery_only_marks_the_messages_that_were_sent(monkeypatch):
     # 2개로 쪼개진 뒤 두 번째가 실패하면, 첫 번째분만 발송 완료로 남아야 한다.
+    monkeypatch.setattr(digest_job, "MAX_ITEMS_PER_DIGEST", 100)
     companies = [{"id": "company-1", "name": "Acme", "telegram_chat_id": "111"}]
     watches_by_company = {"company-1": [_watch(name="IT watch", category="LIKELY_IT")]}
     opportunities = [
@@ -268,3 +368,58 @@ def test_run_does_not_mark_sent_when_telegram_send_fails(monkeypatch):
     digest_job.run()
 
     assert marked == []
+
+
+def test_remaining_notice_links_to_the_web_list_when_configured():
+    matches = [(_opp(id_="opp-1", title="공고 1"), ["W"])]
+    body, _ = digest_job._format_messages(
+        "Acme", matches, remaining=23, web_url="https://example.test/opportunities"
+    )[0]
+
+    assert "23건 더 있어요" in body
+    assert "전체 목록 보기: https://example.test/opportunities" in body
+
+
+def test_remaining_notice_omits_the_link_when_not_configured():
+    # 주소 설정이 비어 있으면 죽은 링크를 매일 보내는 대신 문구만 남긴다.
+    matches = [(_opp(id_="opp-1", title="공고 1"), ["W"])]
+    body, _ = digest_job._format_messages("Acme", matches, remaining=23)[0]
+
+    assert "23건 더 있어요" in body
+    assert "http" not in body
+
+
+def test_run_passes_the_configured_web_url_through_to_the_message(monkeypatch):
+    """설정값이 실제 발송 경로까지 도달하는지 검증한다.
+
+    설정 필드를 추가하고 정작 그 값을 쓰는 지점에 연결하지 않아 조용히 None으로
+    남는 실수를 이 저장소 밖에서 이미 한 번 했다. 문구만 보는 테스트는 그걸 못 잡아서
+    run() 경로로 확인하고, 끝의 슬래시가 중복되지 않는지도 함께 본다.
+    """
+    _patch_settings(monkeypatch, "https://example.test/")
+    monkeypatch.setattr(digest_job, "MAX_ITEMS_PER_DIGEST", 1)
+    companies = [{"id": "company-1", "name": "Acme", "telegram_chat_id": "111"}]
+    watches_by_company = {"company-1": [_watch(name="IT watch", category="LIKELY_IT")]}
+    opportunities = [
+        _opp(id_=f"opp-{n}", title=f"공고 {n}", category="LIKELY_IT") for n in range(3)
+    ]
+
+    monkeypatch.setattr(digest_job, "get_companies_with_telegram", lambda: companies)
+    monkeypatch.setattr(digest_job, "get_active_watch_conditions", lambda ids: watches_by_company)
+    monkeypatch.setattr(digest_job, "get_recent_opportunities", lambda since: opportunities)
+    monkeypatch.setattr(digest_job, "get_match_scores", lambda cids, oids: {})
+    monkeypatch.setattr(digest_job, "get_already_sent", lambda cid, oids: set())
+
+    sent_messages: list[str] = []
+    monkeypatch.setattr(
+        digest_job,
+        "send_telegram_message",
+        lambda chat_id, text: sent_messages.append(text) or True,
+    )
+    monkeypatch.setattr(digest_job, "mark_sent", lambda cid, oids: None)
+
+    digest_job.run()
+
+    body = "\n".join(sent_messages)
+    assert "2건 더 있어요" in body
+    assert "전체 목록 보기: https://example.test/opportunities" in body

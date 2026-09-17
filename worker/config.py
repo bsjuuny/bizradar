@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     kstartup_api_key: str | None = None
 
     telegram_bot_token: str | None = None
+    # Watch 다이제스트가 "그 외 N건" 안내에 붙이는 웹 주소. 배포 주소는 환경마다 다르고
+    # 바뀔 수 있어서 코드에 박지 않는다 - 비어 있으면 링크 없이 문구만 나간다.
+    web_base_url: str | None = None
 
     feature_challenge: bool = True
     challenge_collection_enabled: bool = True

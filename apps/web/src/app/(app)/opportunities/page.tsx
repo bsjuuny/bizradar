@@ -11,6 +11,7 @@ import {
 import { formatCurrencyKRW, formatDate } from "@/lib/format";
 import { CategoryBadge } from "./category-badge";
 import { MatchScoreBadge } from "./match-score-badge";
+import { OpenToAllBadge } from "./open-to-all-badge";
 
 const CATEGORY_TABS: { value: Category | ""; label: string }[] = [
   { value: "", label: "전체" },
@@ -213,6 +214,9 @@ export default async function OpportunitiesPage({
                   <th className="px-4 py-2.5 text-xs font-semibold tracking-wide whitespace-nowrap text-muted-foreground uppercase">
                     매칭
                   </th>
+                  <th className="px-4 py-2.5 text-xs font-semibold tracking-wide whitespace-nowrap text-muted-foreground uppercase">
+                    지원자격
+                  </th>
                   <th className="px-4 py-2.5 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
                     <Link
                       href={sortHref("organization")}
@@ -265,6 +269,9 @@ export default async function OpportunitiesPage({
                     </td>
                     <td className="px-4 py-3">
                       <MatchScoreBadge score={item.matchScore} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <OpenToAllBadge opportunity={item} />
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-muted-foreground">
                       {item.organization ?? "—"}

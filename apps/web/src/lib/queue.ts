@@ -2,7 +2,11 @@ import "server-only";
 
 import { requireCompany, requireUser } from "@/lib/dal";
 import { createClient } from "@/lib/supabase/server";
-import type { Category, OpportunitySummary } from "@/lib/opportunities";
+import {
+  OPPORTUNITY_SUMMARY_COLUMNS,
+  type Category,
+  type OpportunitySummary,
+} from "@/lib/opportunities";
 import { daysUntilDeadline } from "@/lib/format";
 
 /** 이 안이면 "오늘 결정해야 할" 긴급 항목으로 취급한다 (D-3 ~ D-Day). */
@@ -150,7 +154,7 @@ export async function getTodayQueue(): Promise<TodayQueue> {
   // 지났거나(오늘 포함) 아예 정해지지 않은 공고만 가져온다.
   const { data: opportunities, error: opportunityError } = await supabase
     .from("opportunities_current")
-    .select("id, title, category, organization, budget_amount, posted_at, bid_close_at, bid_ntce_no, bid_ntce_ord")
+    .select(`${OPPORTUNITY_SUMMARY_COLUMNS}, bid_ntce_no, bid_ntce_ord`)
     .or(`bid_close_at.gte.${now.toISOString()},bid_close_at.is.null`)
     .order("bid_close_at", { ascending: true, nullsFirst: false })
     .limit(80);
