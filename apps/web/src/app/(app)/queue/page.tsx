@@ -1,6 +1,12 @@
 import Link from "next/link";
 import { formatCurrencyKRW, formatDateTime, formatDday } from "@/lib/format";
-import { getTodayQueue, hasWatchCriteria, type QueueItem, type QueueStatus } from "@/lib/queue";
+import {
+  describeWatchCriteria,
+  getTodayQueue,
+  hasWatchCriteria,
+  type QueueItem,
+  type QueueStatus,
+} from "@/lib/queue";
 import { MatchScoreBadge } from "../opportunities/match-score-badge";
 import { deleteWatchCondition, removeSavedOpportunity, saveOpportunity, toggleWatchCondition } from "./actions";
 import { WatchForm } from "./watch-form";
@@ -209,11 +215,7 @@ export default async function QueuePage() {
                             )}
                           </div>
                           <p className="mt-1 text-xs text-muted-foreground">
-                            {[
-                              watch.keyword && `keyword: ${watch.keyword}`,
-                              watch.category && `category: ${watch.category}`,
-                              watch.min_match_score !== null && `score >= ${watch.min_match_score}`,
-                            ].filter(Boolean).join(" · ") || "No filters set"}
+                            {describeWatchCriteria(watch).join(" · ") || "설정된 필터 없음"}
                           </p>
                           {!usable && (
                             <p className="mt-1.5 text-xs text-amber-700 dark:text-amber-400">

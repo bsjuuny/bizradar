@@ -7,7 +7,7 @@ import {
   type Category,
   type OpportunitySummary,
 } from "@/lib/opportunities";
-import { daysUntilDeadline } from "@/lib/format";
+import { daysUntilDeadline, formatCurrencyKRW } from "@/lib/format";
 
 /** 이 안이면 "오늘 결정해야 할" 긴급 항목으로 취급한다 (D-3 ~ D-Day). */
 const URGENT_WINDOW_DAYS = 3;
@@ -80,7 +80,40 @@ export function matchesWatch(
   return true;
 }
 
-export function hasWatchCriteria(watch: Pick<WatchCondition, "keyword" | "category" | "min_budget" | "max_budget" | "min_match_score">) {
+type WatchCriteriaFields = Pick<
+  WatchCondition,
+  "keyword" | "category" | "min_budget" | "max_budget" | "min_match_score"
+>;
+
+/**
+ * Watch 조건을 사람이 읽을 요약 조각들로 바꾼다. 빈 배열이면 진짜로 조건이 하나도 없는
+ * Watch다(= `hasWatchCriteria`가 false).
+ *
+ * `hasWatchCriteria`가 조건으로 인정하는 필드를 하나도 빠뜨리지 말 것 - 큐 페이지가
+ * keyword/category/min_match_score만 직접 나열하고 예산 두 필드를 빼먹어서, 예산만
+ * 설정한 활성 Watch가 "설정된 필터 없음"으로 표시되던 버그가 있었다. 실제로는 정상
+ * 매칭되고 알림도 나가는 Watch였다. 두 함수가 같은 필드 목록(WatchCriteriaFields)을
+ * 공유하게 묶어 두면 다음에 조건이 추가될 때 한쪽만 고치는 실수가 타입에서 드러난다.
+ */
+export function describeWatchCriteria(watch: WatchCriteriaFields): string[] {
+  const parts: string[] = [];
+  const keyword = watch.keyword?.trim();
+  if (keyword) parts.push(`키워드: ${keyword}`);
+  if (watch.category) parts.push(`분류: ${watch.category}`);
+  if (watch.min_budget !== null && watch.max_budget !== null) {
+    parts.push(
+      `예산: ${formatCurrencyKRW(watch.min_budget)} ~ ${formatCurrencyKRW(watch.max_budget)}`,
+    );
+  } else if (watch.min_budget !== null) {
+    parts.push(`예산: ${formatCurrencyKRW(watch.min_budget)} 이상`);
+  } else if (watch.max_budget !== null) {
+    parts.push(`예산: ${formatCurrencyKRW(watch.max_budget)} 이하`);
+  }
+  if (watch.min_match_score !== null) parts.push(`매칭점수: ${watch.min_match_score}점 이상`);
+  return parts;
+}
+
+export function hasWatchCriteria(watch: WatchCriteriaFields) {
   return Boolean(
     watch.keyword?.trim() ||
       watch.category ||
