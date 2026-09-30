@@ -8,6 +8,28 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+# 서비스(PM2)로 뜰 때만 금고를 읽는다 — worker/config.py 에 두면 테스트가 import 할 때 실제 키가 들어가
+# "키 없으면 건너뜀" 테스트가 깨졌다(2026-09-30).
+# 공용 DPAPI 금고(C:\github\.secrets)를 .env 보다 먼저 읽는다(2026-09-30). 금고에 없는 값만 .env 가 채운다.
+# 금고가 없는 환경(다른 PC·CI)에서는 조용히 건너뛰고, 열지 못하면 경고만 남긴다.
+def _load_github_secrets(file_keys):
+    import importlib.util as _ilu
+    import os as _os
+    import sys as _sys
+    _path = r"C:\github\.secrets\load.py"
+    if not _os.path.exists(_path):
+        return
+    try:
+        _spec = _ilu.spec_from_file_location("github_secrets_load", _path)
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        _mod.load_secrets(file_keys, optional=True)
+    except Exception as _exc:  # noqa: BLE001
+        print(f"[secrets] 금고 로더를 불러오지 못했습니다: {_exc}", file=_sys.stderr)
+
+
+_load_github_secrets(["bizradar/.env.worker"])
+
 from worker.config import get_settings
 from worker.jobs import (
     analyze_job,
