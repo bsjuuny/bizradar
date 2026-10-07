@@ -2,6 +2,7 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/dal";
+import { ilikeAnyFilter } from "@/lib/postgrest";
 
 export const DEFAULT_PAGE_SIZE = 20;
 export const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
@@ -115,10 +116,6 @@ export async function getOrganizationAwardHistory(
     .slice(0, options.limit ?? 5);
 }
 
-function escapeLikeTerm(term: string): string {
-  return term.replace(/[%_]/g, "\\$&");
-}
-
 // Batch-maps (bid_ntce_no, bid_ntce_ord) back to an opportunities_current.id so a row
 // can link to its opportunity detail page. Degrades to "no link" per row on error or
 // on a genuine miss, rather than hiding the award row itself - same failure-isolation
@@ -181,8 +178,7 @@ export async function getAwardResults({
 
   const term = q?.trim();
   if (term) {
-    const escaped = escapeLikeTerm(term);
-    query = query.or(`title.ilike.%${escaped}%,winner_name.ilike.%${escaped}%`);
+    query = query.or(ilikeAnyFilter(["title", "winner_name"], term));
   }
 
   const { data, error, count } = await query;

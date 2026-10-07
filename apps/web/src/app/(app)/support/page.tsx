@@ -87,29 +87,29 @@ function FilterGroup({ label, children }: { label: string; children: ReactNode }
   );
 }
 
+type SearchParams = Record<string, string | string[] | undefined>;
+
+// A repeated key (?q=a&q=b) arrives as an array; only the first value counts.
+function first(value: string | string[] | undefined): string | undefined {
+  return Array.isArray(value) ? value[0] : value;
+}
+
 export default async function SupportPage({
   searchParams,
 }: {
-  searchParams: Promise<{
-    q?: string;
-    status?: string;
-    it?: string;
-    investment?: string;
-    source?: string;
-    field?: string;
-    page?: string;
-    pageSize?: string;
-  }>;
+  searchParams: Promise<SearchParams>;
 }) {
   const params = await searchParams;
-  const q = params.q ?? "";
-  const status = parseSupportStatus(params.status);
-  const itOnly = params.it === "1";
-  const investmentOnly = params.investment === "1";
-  const source = parseSupportSource(params.source);
-  const field = parseSupportField(params.field)?.key;
-  const page = params.page ? Math.max(1, parseInt(params.page, 10) || 1) : 1;
-  const requestedPageSize = params.pageSize ? parseInt(params.pageSize, 10) : undefined;
+  const q = first(params.q) ?? "";
+  const status = parseSupportStatus(first(params.status));
+  const itOnly = first(params.it) === "1";
+  const investmentOnly = first(params.investment) === "1";
+  const source = parseSupportSource(first(params.source));
+  const field = parseSupportField(first(params.field))?.key;
+  const rawPage = first(params.page);
+  const page = rawPage ? Math.max(1, parseInt(rawPage, 10) || 1) : 1;
+  const rawPageSize = first(params.pageSize);
+  const requestedPageSize = rawPageSize ? parseInt(rawPageSize, 10) : undefined;
 
   const { items, total, pageSize } = await getSupportPrograms({
     page,

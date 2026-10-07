@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -49,15 +51,17 @@ from worker.logging_config import configure_logging  # noqa: E402
 
 configure_logging()
 logger = logging.getLogger("bizradar.worker")
+SEOUL = ZoneInfo("Asia/Seoul")
 
 
 def build_scheduler() -> BlockingScheduler:
     return BlockingScheduler(
         timezone="Asia/Seoul",
-        # Interval jobs share the start time, so at every hour g2b, kstartup, bizinfo,
-        # analyze and match fire together (+ g2b-award every 6h, challenge jobs). APScheduler
-        # checks misfire_grace_time when a queued job actually starts, so with too few
-        # threads the one left waiting >60s behind long runs is skipped as "missed".
+        # Interval jobs share the start time, so g2b, kstartup, analyze and match fire
+        # together every hour (+ g2b-award every 6h, the challenge jobs). APScheduler checks
+        # misfire_grace_time when a queued job actually starts, so with too few threads the
+        # one left waiting >60s behind long runs is skipped as "missed". Headroom above
+        # the 5-6 that can coincide.
         executors={"default": ThreadPoolExecutor(10)},
         job_defaults={
             "max_instances": 1,
@@ -73,7 +77,17 @@ def main() -> None:
     scheduler.add_job(g2b_job.run, "interval", hours=1, id="g2b-collect")
     scheduler.add_job(g2b_award_job.run, "interval", hours=6, id="g2b-award-collect")
     scheduler.add_job(kstartup_job.run, "interval", hours=1, id="kstartup-collect")
-    scheduler.add_job(bizinfo_job.run, "interval", hours=1, id="bizinfo-collect")
+    # Offset from the top-of-the-hour group: ~1,450 upserts through the one shared
+    # Supabase client while 4-5 other jobs use it is when the worker's intermittent
+    # "WinError 10035" socket failures hit (26-30 BizInfo rows per run on 2026-10-07, at
+    # :08 alongside the others). :35 has no other interval job (analyze :x0, match :x5).
+    scheduler.add_job(
+        bizinfo_job.run,
+        "interval",
+        hours=1,
+        id="bizinfo-collect",
+        next_run_time=datetime.now(SEOUL) + timedelta(minutes=35),
+    )
     scheduler.add_job(analyze_job.run, "interval", minutes=10, id="analyze")
     scheduler.add_job(match_job.run, "interval", minutes=15, id="match")
     if settings.feature_challenge and settings.challenge_collection_enabled:

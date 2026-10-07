@@ -18,11 +18,14 @@ as character-bigram sets:
 - the set of numbers in the title must be identical - this is what separates
   "2026년 2차" from "2026년 3차" of the same recurring program, which otherwise score
   0.85+ (seen in the data: 용인시 해외진출 종합지원사업 2차 vs 3차);
-- when both sides have a deadline it must be the same day, which is strong evidence on
-  its own (overlap >= 0.8). When either side has none (65% of 기업마당 postings say
-  "예산 소진시까지" instead of a date), Jaccard >= 0.65 is required on top of overlap
-  >= 0.9: the one false pair scored overlap 0.95 but Jaccard 0.59, the weakest true
-  date-less pair 0.70.
+- when both sides have a deadline it must be the same day, plus overlap >= 0.8 and
+  Jaccard >= 0.55. The same day is strong evidence but not proof - month-end deadlines
+  are common, and a short generic title is nearly a subset of a longer unrelated one
+  ("2026년 멘토링 프로그램" vs "[부산] 2026년 해양 멘토링 프로그램 참여기업 모집 공고":
+  overlap 0.91, Jaccard 0.50). The weakest true dated pair measured 0.62.
+- when either side has no deadline (65% of 기업마당 postings say "예산 소진시까지"),
+  overlap >= 0.9 and Jaccard >= 0.65: the one false pair scored overlap 0.95 but Jaccard
+  0.59, the weakest true date-less pair 0.70.
 """
 
 from __future__ import annotations
@@ -33,6 +36,7 @@ from dataclasses import dataclass, field
 from datetime import date
 
 OVERLAP_WITH_SAME_DEADLINE = 0.8
+JACCARD_WITH_SAME_DEADLINE = 0.55
 OVERLAP_WITHOUT_DEADLINE = 0.9
 JACCARD_WITHOUT_DEADLINE = 0.65
 
@@ -81,13 +85,24 @@ def similarity(a: ProgramTitle, b: ProgramTitle) -> tuple[float, float]:
     return shared / min(len(a.bigrams), len(b.bigrams)), shared / len(a.bigrams | b.bigrams)
 
 
-def is_same_program(a: ProgramTitle, b: ProgramTitle) -> bool:
+def match_score(a: ProgramTitle, b: ProgramTitle) -> tuple[float, float] | None:
+    """(overlap, Jaccard) when the two rows are the same program, else None."""
     if a.numbers != b.numbers:
-        return False
-    overlap, jaccard = similarity(a, b)
+        return None
     if a.application_end is not None and b.application_end is not None:
-        return a.application_end == b.application_end and overlap >= OVERLAP_WITH_SAME_DEADLINE
-    return overlap >= OVERLAP_WITHOUT_DEADLINE and jaccard >= JACCARD_WITHOUT_DEADLINE
+        if a.application_end != b.application_end:
+            return None
+        min_overlap, min_jaccard = OVERLAP_WITH_SAME_DEADLINE, JACCARD_WITH_SAME_DEADLINE
+    else:
+        min_overlap, min_jaccard = OVERLAP_WITHOUT_DEADLINE, JACCARD_WITHOUT_DEADLINE
+    overlap, jaccard = similarity(a, b)
+    if overlap >= min_overlap and jaccard >= min_jaccard:
+        return overlap, jaccard
+    return None
+
+
+def is_same_program(a: ProgramTitle, b: ProgramTitle) -> bool:
+    return match_score(a, b) is not None
 
 
 def find_duplicates(keep: Iterable[ProgramTitle], hide: Iterable[ProgramTitle]) -> dict[str, str]:
@@ -100,10 +115,8 @@ def find_duplicates(keep: Iterable[ProgramTitle], hide: Iterable[ProgramTitle]) 
     for candidate in hide:
         best: tuple[tuple[float, float], str] | None = None
         for original in keep_rows:
-            if not is_same_program(candidate, original):
-                continue
-            score = similarity(candidate, original)
-            if best is None or score > best[0]:
+            score = match_score(candidate, original)
+            if score is not None and (best is None or score > best[0]):
                 best = (score, original.id)
         if best is not None:
             duplicates[candidate.id] = best[1]

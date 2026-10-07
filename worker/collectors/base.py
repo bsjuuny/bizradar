@@ -17,6 +17,7 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from datetime import datetime
+from html.entities import html5
 from typing import Any
 
 from pydantic import BaseModel
@@ -31,11 +32,29 @@ def compute_content_hash(payload: dict[str, Any]) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def _decode_reference(match: re.Match[str]) -> str:
+    reference = match.group()
+    if reference[1] == "#":
+        return html.unescape(reference)
+    # Exact HTML5 names only. html.unescape would also expand a legacy prefix inside an
+    # unknown name ("&notice;" -> "¬ice;").
+    return html5.get(reference[1:], reference)
+
+
 def decode_entities(text: str) -> str:
-    """Decode HTML character references - only the ';'-terminated ones. html.unescape on
-    its own also expands legacy references with no ';' (HTML5 parsing rules), so it turns
-    a query string like "?schM=view&notice=1" into "?schM=view¬ice=1"."""
-    return _ENTITY.sub(lambda match: html.unescape(match.group()), text)
+    """Decode HTML character references: numeric ones and exact named ones ending in ';'.
+    html.unescape on its own also expands legacy names with no ';' (HTML5 parsing rules),
+    turning a query string like "?schM=view&notice=1" into "?schM=view¬ice=1"."""
+    return _ENTITY.sub(_decode_reference, text)
+
+
+def clean_line(value: Any) -> str:
+    """One-line display text from a source field: entities decoded, runs of whitespace
+    (including newlines) collapsed to one space. Shared by the support-program collectors
+    so both sources' titles and names come out the same way."""
+    if value is None:
+        return ""
+    return " ".join(decode_entities(str(value)).split())
 
 
 class CollectorError(Exception):

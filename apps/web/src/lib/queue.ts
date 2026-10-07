@@ -8,6 +8,7 @@ import {
   type OpportunitySummary,
 } from "@/lib/opportunities";
 import { daysUntilDeadline, formatCurrencyKRW } from "@/lib/format";
+import { ilikeAnyFilter } from "@/lib/postgrest";
 
 /** 이 안이면 "오늘 결정해야 할" 긴급 항목으로 취급한다 (D-3 ~ D-Day). */
 const URGENT_WINDOW_DAYS = 3;
@@ -59,10 +60,6 @@ function isUrgent(item: QueueItem, now: Date): boolean {
   if (item.saved?.status === "DECLINED") return false;
   const days = daysUntilDeadline(item.bid_close_at, now);
   return days !== null && days >= 0 && days <= URGENT_WINDOW_DAYS;
-}
-
-function escapeLikeTerm(term: string): string {
-  return term.replace(/[%_]/g, "\\$&");
 }
 
 export function matchesWatch(
@@ -288,11 +285,10 @@ export async function getWatchPreview(keyword: string) {
   const supabase = await createClient();
   const term = keyword.trim();
   if (!term) return [];
-  const escaped = escapeLikeTerm(term);
   const { data, error } = await supabase
     .from("opportunities_current")
     .select("id, title, category, organization, budget_amount, posted_at, bid_close_at")
-    .or(`title.ilike.%${escaped}%,organization.ilike.%${escaped}%`)
+    .or(ilikeAnyFilter(["title", "organization"], term))
     .order("bid_close_at", { ascending: true, nullsFirst: false })
     .limit(10);
   if (error) throw new Error(`Failed to preview watch condition: ${error.message}`);

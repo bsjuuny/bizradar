@@ -52,8 +52,16 @@ matched with the rule in "Dedupe" below.
   The official spec page shows other forms (`{"jsonArray": {"item": [...]}}`,
   `20220727 ~ 20220930`, RSS-style names) - still accepted as fallbacks. Recorded sample:
   `fixtures/bizinfo/api_response_sample.json` (5 items, contact fields removed).
-- The key is in the query string and httpx error messages quote the URL, so the collector
-  masks the key in every error it raises or logs.
+- The key is in the query string. httpx error messages quote the URL (raw or
+  percent-encoded), so the collector masks both forms in every error it raises or logs.
+  httpx also logs every request URL at INFO - `worker/logging_config.py` holds httpx and
+  httpcore at WARNING. Before that fix the 12:08 and 13:08 runs on 2026-10-07 wrote the key
+  into the PM2 out log (and the data.go.kr serviceKey has been landing there all along).
+- Retries (transport errors, 5xx) wait 2 s then 5 s; 4xx is not retried. `content_hash`
+  leaves out `inqireCo` (view count) and `totCnt` (list size), which change every fetch.
+- Scheduled at a 35-minute offset from the top-of-the-hour job group: at :08 alongside the
+  others, 26-30 of ~1,450 upserts per run failed with the worker's known intermittent
+  `WinError 10035` (shared Supabase client under concurrency; next run re-upserts them).
 - Mapping: `organization` = 수행기관 unless it is the placeholder "직접수행"/"기초자치단체",
   then 소관기관; `department` = 소관기관 (the detail page labels it 소관기관 for BizInfo rows);
   `category` = 지원분야 대분류; `region` = the title's leading `[지역]` tag, only when every
@@ -86,7 +94,9 @@ K-Startup wraps names in 「」 or moves "4차" to the end, spacing/punctuation 
    trailing (재/수정/변경/연장)공고; lowercase;
 2. the set of numbers in both titles must be equal (separates "2차" from "3차" of a
    recurring program, which otherwise score 0.85+);
-3. both have a deadline: same day and bigram overlap coefficient >= 0.8;
+3. both have a deadline: same day, bigram overlap coefficient >= 0.8 and Jaccard >= 0.55
+   (the same day alone isn't proof - month-end deadlines are common, and a short generic
+   title is nearly a subset of a longer unrelated one; weakest true dated pair: 0.62);
    either lacks one: overlap >= 0.9 **and** Jaccard >= 0.65.
 
 All 18 candidate pairs in the measurement were read by hand: 17 same announcement, 1 not
@@ -96,7 +106,8 @@ both sets are regression tests in `worker/tests/test_support_dedupe.py`. Known m
 same contest listed with different deadlines on the two sites (10-09 vs 10-11) stays
 visible twice.
 
-The pass runs at the end of every BizInfo job (`worker/jobs/bizinfo_job.py`) over open
+The pass runs at the end of every BizInfo job run (`worker/jobs/bizinfo_job.py`) - also
+when collection was skipped (no key) or failed, so marks never go stale - over open
 K-Startup rows and recruiting BizInfo rows, and writes only rows whose mark changes,
 including clearing stale marks. "Open" is exactly the web's default 모집 중 definition
 (recruiting, and no deadline or one not yet passed): the kept K-Startup row must itself
@@ -113,7 +124,11 @@ A K-Startup row collected between BizInfo runs is picked up within the hour.
 
 ## Web
 
-`/support`: hides `duplicate_of` rows, shows each row's source under its title, and shows
+`/support`: hides `duplicate_of` rows - only in views filtered by status alone. Source,
+search, IT, investment and 지원분야 filters can be passed by one row of a pair and not the
+other (the source itself, differently worded titles/agency names, different taxonomies), so
+hiding the copy there could drop the program entirely; those views may list it twice
+instead. It shows each row's source under its title, and shows
 신청기간 text when there is no deadline date (`apps/web/src/lib/support-display.ts`).
 Detail page: source-aware labels and "기업마당 원문 보기" link.
 
@@ -147,9 +162,10 @@ in support-program titles - measured on all 1,599 open programs (2026-10-07):
 "전산" = substring of 안전산업/가전산업, "플랫폼/온라인/디지털" = 소상공인 online-sales
 support, "로봇/반도체" = hardware. A trailing parenthetical that names a funding project
 ("...사업"/"...구축", e.g. "(AI 빅데이터 기반 의료바이오 첨단기기 연구제조센터 구축사업)" on a
-medical-device program) is ignored unless it names an IT-industry program; other trailing
-parentheticals count, since K-Startup puts the field there ("(AI 분야)"). "게임체인저" is
-an exception (policy buzzword, not the game industry).
+medical-device program) is ignored unless it names an IT-industry program or an IT voucher
+("(AI바우처 지원사업)"); other trailing parentheticals count, since K-Startup puts the field
+there ("(AI 분야)"). Full-width parentheses are treated the same. "게임체인저" is an
+exception (policy buzzword, not the game industry).
 
 Result: 155 of 1,599 open programs. Every hit was read; then the 308 non-hits with weaker
 words were read for misses, which added 디지털혁신, 디지털 품질(SW testing), 가명정보,

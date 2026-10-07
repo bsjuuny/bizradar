@@ -67,8 +67,10 @@ def configured(monkeypatch):
     return repo
 
 
-def test_job_skips_cleanly_without_key(monkeypatch, caplog):
+def test_job_skips_collection_without_key_but_still_dedupes(monkeypatch, caplog):
     monkeypatch.setattr(bizinfo_job, "get_settings", lambda: Settings(_env_file=None))
+    repo = FakeRepo()
+    monkeypatch.setattr(bizinfo_job, "support_programs", repo)
 
     def must_not_construct(*args, **kwargs):
         raise AssertionError("collector must not run without a key")
@@ -79,6 +81,9 @@ def test_job_skips_cleanly_without_key(monkeypatch, caplog):
         bizinfo_job.run()
 
     assert any("skipped" in record.message for record in caplog.records)
+    assert repo.closed_with is None
+    # Rows collected while a key existed still get their marks maintained.
+    assert repo.changes == {"bz-1": "ks-1", "bz-2": None}
 
 
 def test_job_collects_closes_unlisted_and_dedupes(monkeypatch, configured, caplog):
@@ -113,7 +118,8 @@ def test_job_isolates_collector_failure(monkeypatch, configured, caplog):
 
     assert any("failed entirely" in record.message for record in caplog.records)
     assert configured.closed_with is None
-    assert configured.changes is None
+    # A BizInfo outage must not freeze stale duplicate_of marks: dedupe still runs.
+    assert configured.changes == {"bz-1": "ks-1", "bz-2": None}
 
 
 def test_close_failure_does_not_stop_dedupe(monkeypatch, configured, caplog):

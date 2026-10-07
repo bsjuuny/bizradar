@@ -40,3 +40,11 @@ def configure_logging(level: int = logging.INFO) -> None:
     root = logging.getLogger()
     root.setLevel(level)
     root.handlers = [handler]
+
+    # httpx logs every request URL at INFO, and three of the worker's API keys travel in
+    # the query string (data.go.kr serviceKey, 기업마당 crtfcKey) - found 2026-10-07 in the
+    # PM2 out log, in plain text. It is also most of that log's volume (every Supabase
+    # call). Failures still surface: collectors log their own warnings, httpx WARNING+
+    # still passes.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(max(level, logging.WARNING))

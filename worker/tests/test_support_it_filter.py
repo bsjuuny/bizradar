@@ -105,3 +105,17 @@ def test_game_changer_buzzword_is_not_the_game_industry():
 
 def test_html_entities_are_decoded_before_matching():
     assert is_it_related("2026년 &apos;AI 바우처&apos; 공급기업 모집")
+
+
+def test_trailing_it_voucher_project_is_kept():
+    # Constructed: a funding-project parenthetical that is itself IT.
+    assert is_it_related("2026년 수요기업 모집 공고(AI바우처 지원사업)")
+    assert is_it_related("2026년 수요기업 모집 공고(데이터바우처 지원사업)")
+
+
+def test_full_width_parentheses_are_treated_like_ascii_ones():
+    assert is_it_related("2026년 수요기업 모집 공고（AI 바우처 지원사업）")
+    assert not is_it_related(
+        "의료기기 부품 국산화 지원사업 공고"
+        "（AI 빅데이터 기반 의료바이오 첨단기기 연구제조센터 구축사업）"
+    )

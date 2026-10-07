@@ -2,6 +2,7 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/dal";
+import { ilikeAnyFilter } from "@/lib/postgrest";
 
 export const DEFAULT_PAGE_SIZE = 20;
 export const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
@@ -124,10 +125,6 @@ export type OpportunityPage = {
   dir: "asc" | "desc";
 };
 
-function escapeLikeTerm(term: string): string {
-  return term.replace(/[%_]/g, "\\$&");
-}
-
 // match_scores is company-scoped by RLS (see supabase/migrations - policy compares
 // against auth_company_id()), so this never needs to filter by company explicitly -
 // a user simply can't see another company's rows regardless of the query.
@@ -199,8 +196,7 @@ export async function getOpportunities({
 
   const term = q?.trim();
   if (term) {
-    const escaped = escapeLikeTerm(term);
-    query = query.or(`title.ilike.%${escaped}%,organization.ilike.%${escaped}%`);
+    query = query.or(ilikeAnyFilter(["title", "organization"], term));
   }
 
   const { data, error, count } = await query;

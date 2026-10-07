@@ -36,6 +36,7 @@ from worker.collectors.base import (
     BaseCollector,
     CollectorError,
     RawRecord,
+    clean_line,
     compute_content_hash,
     decode_entities,
 )
@@ -74,10 +75,16 @@ class KStartupNormalizedProgram(BaseModel):
     raw_payload: dict[str, Any]
 
 
+# The API returns some fields HTML-escaped - found live 2026-10-07: 28 stored rows showed
+# "&apos;" / "&amp;" on Support Radar ("기술개발(R&amp;D)", "&apos;성과기업 후속 지원&apos;").
+# Decoded here; existing rows via worker/jobs/support_reclassify.py.
 def _text(value: Any) -> str | None:
-    # The API returns some fields HTML-escaped - found live 2026-10-07: 28 stored rows
-    # showed "&apos;" / "&amp;" on Support Radar ("기술개발(R&amp;D)", "&apos;성과기업 후속
-    # 지원&apos;"). Decoded once here; existing rows via worker/jobs/support_reclassify.py.
+    """Single-line fields - same cleaning as the 기업마당 collector (clean_line)."""
+    return clean_line(value) or None
+
+
+def _multiline(value: Any) -> str | None:
+    """pbanc_ctnt keeps its line breaks; only entities are decoded."""
     if not value:
         return None
     return decode_entities(str(value)).strip() or None
@@ -241,7 +248,7 @@ class KStartupCollector(BaseCollector[KStartupNormalizedProgram]):
     def normalize(self, raw: RawRecord) -> KStartupNormalizedProgram:
         item = raw.payload
         title = _text(item.get("biz_pbanc_nm")) or ""
-        description = _text(item.get("pbanc_ctnt"))
+        description = _multiline(item.get("pbanc_ctnt"))
         return KStartupNormalizedProgram(
             external_id=raw.external_id,
             title=title,

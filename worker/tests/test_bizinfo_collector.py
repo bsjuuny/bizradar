@@ -50,7 +50,9 @@ def _raw(item: dict) -> RawRecord:
 
 def _collector(handler=None, api_key: str | None = KEY) -> BizInfoCollector:
     client = httpx.Client(transport=httpx.MockTransport(handler)) if handler else None
-    return BizInfoCollector(settings=_settings(api_key), client=client, today=TODAY)
+    return BizInfoCollector(
+        settings=_settings(api_key), client=client, today=TODAY, sleep=lambda seconds: None
+    )
 
 
 def test_extract_items_live_shape_list():
@@ -462,6 +464,7 @@ def test_url_encoded_key_is_masked_too():
         settings=_settings(key),
         client=httpx.Client(transport=httpx.MockTransport(handler)),
         today=TODAY,
+        sleep=lambda seconds: None,
     )
 
     with pytest.raises(CollectorError) as excinfo:
@@ -469,3 +472,40 @@ def test_url_encoded_key_is_masked_too():
     message = str(excinfo.value)
     assert "ab+cd" not in message and "ab%2Bcd" not in message
     assert "***" in message
+
+
+def test_retries_back_off_between_attempts():
+    waits = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503)
+
+    collector = BizInfoCollector(
+        settings=_settings(),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        today=TODAY,
+        sleep=waits.append,
+    )
+
+    with pytest.raises(CollectorError, match="after 3 attempts"):
+        list(collector.collect())
+    assert waits == [2.0, 5.0]  # none before the first attempt
+
+
+def test_content_hash_ignores_view_count_and_list_total():
+    item = extract_items(_fixture_text())[0]
+    viewed_again = {**item, "inqireCo": item["inqireCo"] + 10, "totCnt": 1500}
+
+    first = _collector().normalize(_raw(item)).content_hash
+    second = _collector().normalize(_raw(viewed_again)).content_hash
+
+    assert first == second
+    edited = {**item, "pblancNm": item["pblancNm"] + " (수정)"}
+    assert _collector().normalize(_raw(edited)).content_hash != first
+
+
+def test_unknown_semicolon_names_are_left_alone():
+    # html.unescape("&notice;") would give "¬ice;" (legacy "&not" prefix).
+    item = {"pblancId": "A", "pblancNm": "a &notice; b &copyright; c &amp; d"}
+
+    assert _collector().normalize(_raw(item)).title == "a &notice; b &copyright; c & d"

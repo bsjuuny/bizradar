@@ -85,9 +85,6 @@ export async function getSupportPrograms({
       "id, source, title, organization, supervising_type, category, region, recruiting, investment_linked, it_related, application_end, application_period_text",
       { count: "exact" },
     )
-    // 다른 출처에 같은 공고가 있어 워커가 숨긴 행(기업마당 쪽 사본) - 원본 행이 대신 보인다.
-    // worker/dedupe/support_programs.py, docs/SUPPORT_PROGRAMS.md.
-    .is("duplicate_of", null)
     // `recruiting` (rcrt_prgs_yn) first - found live: sorting by application_end
     // ascending alone put already-expired programs first (the oldest, longest-past
     // deadlines sort "smallest"), not soonest-still-open ones. `recruiting: true` rows
@@ -133,6 +130,16 @@ export async function getSupportPrograms({
   const term = q?.trim();
   if (term) {
     query = query.or(ilikeAnyFilter(["title", "organization"], term));
+  }
+
+  // 다른 출처에 같은 공고가 있어 워커가 숨긴 행(기업마당 쪽 사본, duplicate_of)은 상태 필터만
+  // 걸린 보기에서만 뺀다. 출처·검색어·IT·투자연계·분야 조건은 두 행이 서로 다르게 통과할 수
+  // 있어서(출처 자체, 기관명·제목 표기, 분류 체계가 다르다) 거기서도 빼면 원본이 조건에서
+  // 떨어질 때 공고가 아예 사라진다. 그런 보기에서는 같은 공고가 두 번 보이는 쪽을 택한다
+  // (2026-10-07 기준 17건). worker/dedupe/support_programs.py, docs/SUPPORT_PROGRAMS.md.
+  const onlyStatusFilter = !term && !itOnly && !investmentOnly && !fieldGroup && !source;
+  if (onlyStatusFilter) {
+    query = query.is("duplicate_of", null);
   }
 
   const { data, error, count } = await query;

@@ -3,10 +3,14 @@ configured. A failure here must not take down the scheduler or other jobs
 (docs/DATA_PIPELINE.md#failure-isolation) - existing support_programs rows are left
 untouched on failure, since collection only ever upserts.
 
-After collecting, two follow-up passes run, each isolated from the other:
-1. close: announcements that dropped off 기업마당's list are marked recruiting=false - only
-   when the response was the complete list (BizInfoCollector.complete).
-2. dedupe: 기업마당 rows that repeat an open K-Startup announcement get duplicate_of set,
+Two follow-up passes, each isolated from the other:
+1. close (after a successful collection only): announcements that dropped off 기업마당's
+   list are marked recruiting=false - only when the response was provably the complete
+   list (BizInfoCollector.complete).
+2. dedupe (every run, even when collection was skipped or failed - K-Startup rows keep
+   opening and closing, and a stale duplicate_of would hide a 기업마당 copy whose
+   K-Startup original has left the 모집 중 view): 기업마당 rows that repeat an open
+   K-Startup announcement get duplicate_of set,
    so Support Radar shows the program once (worker/dedupe/support_programs.py). K-Startup
    is the row kept: it is the original posting and carries more fields (모집 여부,
    지원대상, 지역). Runs here rather than in the K-Startup job because only BizInfo rows
@@ -29,6 +33,14 @@ JOB = "bizinfo-collect"
 
 
 def run() -> None:
+    collect()
+    try:
+        dedupe()
+    except Exception:
+        logger.exception("bizinfo: cross-source dedupe failed", extra={"job": JOB})
+
+
+def collect() -> None:
     if not get_settings().bizinfo_api_key:
         logger.info(
             "bizinfo job skipped - BIZINFO_API_KEY is not configured",
@@ -74,11 +86,6 @@ def run() -> None:
             )
         except Exception:
             logger.exception("bizinfo: closing unlisted announcements failed", extra={"job": JOB})
-
-    try:
-        dedupe()
-    except Exception:
-        logger.exception("bizinfo: cross-source dedupe failed", extra={"job": JOB})
 
 
 def dedupe() -> None:

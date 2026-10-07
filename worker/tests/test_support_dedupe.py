@@ -178,3 +178,17 @@ def test_hangul_and_latin_middle_dots_normalize_the_same():
         _p("[경북] 2026년 원전ㆍ에너지ㆍ수소 창업ㆍ벤처 지원사업 모집 공고", None),
         _p("2026년 원전·에너지·수소 창업·벤처 지원사업 모집", date(2026, 11, 1)),
     )
+
+
+@pytest.mark.parametrize(
+    ("keep_title", "hide_title"),
+    [
+        # Constructed: a short generic title nearly contained in a longer unrelated one,
+        # same (month-end) deadline. Overlap ~0.9 but Jaccard ~0.5.
+        ("2026년 멘토링 프로그램", "[부산] 2026년 해양 멘토링 프로그램 참여기업 모집 공고"),
+        ("2026년 수출바우처", "[전남] 2026년 농식품 수출바우처 지원사업 공고"),
+    ],
+)
+def test_same_deadline_alone_does_not_make_a_short_title_a_duplicate(keep_title, hide_title):
+    end = date(2026, 10, 31)
+    assert not is_same_program(_p(hide_title, end), _p(keep_title, end))

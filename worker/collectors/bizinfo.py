@@ -28,7 +28,8 @@ from __future__ import annotations
 import json
 import logging
 import re
-from collections.abc import Iterable
+import time
+from collections.abc import Callable, Iterable
 from datetime import UTC, date, datetime
 from typing import Any
 from urllib.parse import quote, quote_plus, urljoin, urlsplit
@@ -43,6 +44,7 @@ from worker.collectors.base import (
     BaseCollector,
     CollectorError,
     RawRecord,
+    clean_line,
     compute_content_hash,
     decode_entities,
 )
@@ -60,6 +62,13 @@ DETAIL_URL = SITE_ORIGIN + "/sii/siia/selectSIIA200Detail.do?pblancId={pblanc_id
 SEARCH_COUNT = 5000
 REQUEST_TIMEOUT_SECONDS = 60.0
 MAX_RETRIES = 3
+# Seconds before retry 1, 2, ... after a transport error or 5xx - immediate retries of a
+# 5,000-item request just repeat the failure against a struggling server.
+RETRY_BACKOFF_SECONDS = (2.0, 5.0)
+# Per-item fields that change without the announcement changing: the view counter, and the
+# list-wide total (shifts whenever any announcement is added or removed). Left out of
+# content_hash so it only moves when the posting itself does.
+_VOLATILE_FIELDS = frozenset({"inqireCo", "totCnt"})
 SEOUL = ZoneInfo("Asia/Seoul")
 
 # 공고명 맨 앞 [지역] 표시로 쓰이는 값 - 2026-10-07 공개 목록 1,442건에서 실제로 나온 것들.
@@ -128,10 +137,7 @@ def _field(item: dict[str, Any], *names: str) -> str:
     single-line text (HTML entities decoded, whitespace collapsed). Not for URLs - see
     _url_field."""
     for name in names:
-        value = item.get(name)
-        if value is None:
-            continue
-        text = " ".join(decode_entities(str(value)).split())
+        text = clean_line(item.get(name))
         if text:
             return text
     return ""
@@ -237,11 +243,13 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         settings: Settings | None = None,
         client: httpx.Client | None = None,
         today: date | None = None,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.settings = settings or get_settings()
         self._client = client
         self._owns_client = client is None
         self._today = today
+        self._sleep = sleep
         # Filled by collect(), reset at its start: every pblancId in the response, and
         # whether the response held the whole list - only then may the job treat "not
         # listed" as "no longer recruiting".
@@ -285,6 +293,8 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         }
         last_error = ""
         for attempt in range(1, MAX_RETRIES + 1):
+            if attempt > 1:
+                self._sleep(RETRY_BACKOFF_SECONDS[min(attempt - 2, len(RETRY_BACKOFF_SECONDS) - 1)])
             try:
                 resp = self._get_client().get(API_URL, params=params)
             except (httpx.TimeoutException, httpx.TransportError) as exc:
@@ -381,7 +391,9 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
             application_period_text=period_text or None,
             description=description,
             source_url=_absolute_url(_url_field(item, "pblancUrl", "link"), raw.external_id),
-            content_hash=compute_content_hash(item),
+            content_hash=compute_content_hash(
+                {key: value for key, value in item.items() if key not in _VOLATILE_FIELDS}
+            ),
             raw_payload=item,
         )
 

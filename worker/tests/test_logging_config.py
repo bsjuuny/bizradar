@@ -52,3 +52,21 @@ def test_includes_exception_info():
     payload = json.loads(JsonFormatter().format(record))
 
     assert "boom" in payload["error"]
+
+
+def test_httpx_request_lines_are_not_logged_at_info():
+    # httpx logs "HTTP Request: GET <url>" at INFO, and API keys travel in those URLs.
+    from worker.logging_config import configure_logging
+
+    root = logging.getLogger()
+    saved = (root.level, list(root.handlers))
+    try:
+        configure_logging()
+        assert not logging.getLogger("httpx").isEnabledFor(logging.INFO)
+        assert not logging.getLogger("httpcore").isEnabledFor(logging.INFO)
+        assert logging.getLogger("httpx").isEnabledFor(logging.WARNING)
+    finally:
+        root.setLevel(saved[0])
+        root.handlers = saved[1]
+        logging.getLogger("httpx").setLevel(logging.NOTSET)
+        logging.getLogger("httpcore").setLevel(logging.NOTSET)
