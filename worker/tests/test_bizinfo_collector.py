@@ -1,0 +1,348 @@
+"""BizInfoCollector, offline.
+
+`fixtures/bizinfo/api_response_constructed.json` is NOT a recorded API response - no
+BIZINFO_API_KEY existed when the collector was written. Its five items are real
+announcements copied from the public 기업마당 list page on 2026-10-07 (ids, titles,
+신청기간, 소관/수행기관, 지원분야 as shown there), laid out in the field names of the
+official API spec. Fields the list page doesn't show (지원대상, 사업개요) are left out
+rather than invented; tests that need them build a small item inline.
+`api_response_missing_key.json` IS a real response (no crtfcKey, 2026-10-07).
+"""
+
+import json
+from datetime import UTC, date, datetime
+from pathlib import Path
+
+import httpx
+import pytest
+
+from worker.collectors.base import CollectorError, RawRecord
+from worker.collectors.bizinfo import (
+    BizInfoCollector,
+    extract_items,
+    html_to_text,
+    parse_period,
+    parse_region,
+)
+from worker.config import Settings
+
+FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "bizinfo"
+TODAY = date(2026, 10, 7)
+KEY = "test-bizinfo-key-0123"
+
+
+def _settings(api_key: str | None = KEY) -> Settings:
+    return Settings(_env_file=None, bizinfo_api_key=api_key)
+
+
+def _fixture_text() -> str:
+    return (FIXTURES / "api_response_constructed.json").read_text(encoding="utf-8")
+
+
+def _raw(item: dict) -> RawRecord:
+    return RawRecord(
+        source="bizinfo",
+        external_id=item.get("pblancId") or item.get("seq") or "X",
+        fetched_at=datetime.now(UTC),
+        payload=item,
+    )
+
+
+def _collector(handler=None, api_key: str | None = KEY) -> BizInfoCollector:
+    client = httpx.Client(transport=httpx.MockTransport(handler)) if handler else None
+    return BizInfoCollector(settings=_settings(api_key), client=client, today=TODAY)
+
+
+def test_extract_items_live_shape_list():
+    items = extract_items(_fixture_text())
+
+    assert len(items) == 5
+    assert items[0]["pblancId"] == "PBLN_000000000127023"
+
+
+def test_extract_items_official_spec_shape_object_with_item_list():
+    # https://www.bizinfo.go.kr/apiDetail.do?id=bizinfoApi JSON example:
+    # {"jsonArray": {"title": ..., "item": [...]}}
+    body = {"jsonArray": {"title": "기업마당 지원사업정보", "item": [{"pblancId": "A"}]}}
+
+    assert extract_items(json.dumps(body)) == [{"pblancId": "A"}]
+
+
+def test_extract_items_single_item_object():
+    body = {"jsonArray": {"item": {"pblancId": "A"}}}
+
+    assert extract_items(json.dumps(body)) == [{"pblancId": "A"}]
+
+
+def test_extract_items_missing_key_error_raises():
+    text = (FIXTURES / "api_response_missing_key.json").read_text(encoding="utf-8")
+
+    with pytest.raises(CollectorError, match="인증키를 입력해주세요"):
+        extract_items(text)
+
+
+def test_extract_items_non_json_raises_not_crashes():
+    with pytest.raises(CollectorError, match="non-JSON"):
+        extract_items("<html>error</html>")
+
+
+def test_extract_items_unknown_schema_raises():
+    with pytest.raises(CollectorError, match="unexpected schema"):
+        extract_items('{"result": []}')
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("2026-10-02 ~ 2026-10-16", (date(2026, 10, 2), date(2026, 10, 16))),
+        ("20220727 ~ 20220930", (date(2022, 7, 27), date(2022, 9, 30))),  # spec example
+        ("2020.01.01 ~ 2026.12.31", (date(2020, 1, 1), date(2026, 12, 31))),  # seen live
+        (" 2026-10-02~2026-10-02 ", (date(2026, 10, 2), date(2026, 10, 2))),
+        ("예산 소진시까지", None),
+        ("상시 접수", None),
+        ("세부사업별 상이", None),
+        ("", None),
+        ("2026-02-30 ~ 2026-03-10", None),  # not a real date
+        ("2026-10-31 ~ 2026-09-01", None),  # end before start
+    ],
+)
+def test_parse_period_reads_only_real_date_ranges(raw, expected):
+    assert parse_period(raw) == expected
+
+
+@pytest.mark.parametrize(
+    ("title", "expected"),
+    [
+        ("[경기] 2026년 10월 동행축제 ...", "경기"),
+        ("[전남광주] 목포시 ...", "전남광주"),
+        ("[서울ㆍ인천ㆍ경기] 2026년 미래내일 일경험 ...", "서울·인천·경기"),
+        ("[대전ㆍ충청] ...", "대전·충청"),
+        ("2026년 수출지원사업 통합 공고", None),
+        # K-Startup-style organization tag - not a region.
+        ("[한국도로공사] 2026년 상생형 창업, 벤처기업 지원사업", None),
+        ("[서울ㆍ한국도로공사] ...", None),
+    ],
+)
+def test_parse_region_only_from_known_region_tags(title, expected):
+    assert parse_region(title) == expected
+
+
+def test_html_to_text_keeps_line_breaks_and_drops_tags():
+    raw = (
+        "<div>첫 줄&nbsp;입니다.</div><p>둘째 <b>줄</b></p><br/>  <ul><li>항목 &amp; 내용</li></ul>"
+    )
+
+    assert html_to_text(raw) == "첫 줄 입니다.\n둘째 줄\n항목 & 내용"
+
+
+def test_normalize_dated_announcement():
+    item = extract_items(_fixture_text())[0]
+
+    normalized = _collector().normalize(_raw(item))
+
+    assert (
+        normalized.title == "[경기] 2026년 10월 동행축제 소상공인 라이브커머스 참가기업 모집 공고"
+    )
+    assert normalized.organization == "경기지방중소벤처기업청"
+    assert normalized.department == "중소벤처기업부"
+    assert normalized.category == "내수"
+    assert normalized.region == "경기"
+    assert normalized.application_start == datetime(2026, 10, 2)
+    assert normalized.application_end == datetime(2026, 10, 16)
+    assert normalized.application_period_text == "2026-10-02 ~ 2026-10-16"
+    assert normalized.recruiting is True
+    assert normalized.source_url == (
+        "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do"
+        "?pblancId=PBLN_000000000127023"
+    )
+
+
+def test_normalize_budget_bound_period_keeps_text_and_stays_recruiting():
+    item = extract_items(_fixture_text())[1]  # "예산 소진시까지", 수행기관 "기초자치단체"
+
+    normalized = _collector().normalize(_raw(item))
+
+    assert normalized.application_start is None
+    assert normalized.application_end is None
+    assert normalized.application_period_text == "예산 소진시까지"
+    # Posted on 기업마당 right now -> open; no date to say otherwise.
+    assert normalized.recruiting is True
+    # "기초자치단체" is a placeholder, not an organization name.
+    assert normalized.organization == "울산광역시"
+    assert normalized.region == "울산"
+    # Relative pblancUrl is made absolute.
+    assert normalized.source_url == (
+        "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do"
+        "?pblancId=PBLN_000000000126995"
+    )
+
+
+def test_normalize_direct_execution_uses_jurisdiction_and_no_region():
+    item = extract_items(_fixture_text())[3]  # 수행기관 "직접수행", no [지역] tag
+
+    normalized = _collector().normalize(_raw(item))
+
+    assert normalized.organization == "산업통상부"
+    assert normalized.region is None
+
+
+def test_normalize_flags_investment_linked_from_title():
+    items = extract_items(_fixture_text())
+
+    flags = [_collector().normalize(_raw(item)).investment_linked for item in items]
+
+    # Only "[경기] 부천시 2026년 스타트업포럼(IR데모데이) ..." mentions 데모데이.
+    assert flags == [False, False, False, False, True]
+
+
+def test_normalize_past_deadline_is_not_recruiting():
+    item = {"pblancId": "A", "pblancNm": "지난 공고", "reqstBeginEndDe": "2026-09-01 ~ 2026-10-06"}
+
+    assert _collector().normalize(_raw(item)).recruiting is False
+
+
+def test_normalize_spec_rss_aliases_and_html_summary():
+    # Field names from the RSS half of the official spec, used only as fallbacks.
+    item = {
+        "seq": "PBLN_000000000080236",
+        "title": "착한임대인 장관 표창 신청 연장 공고",
+        "link": "http://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_000000000080236",
+        "author": "중소벤처기업부",
+        "excInsttNm": "지방중소벤처기업청",
+        "description": "<div>임대료를 인하한 임대인을 선정하는 사업입니다.</div>",
+        "lcategory": "경영",
+        "reqstDt": "20260901 ~ 20261031",
+        "trgetNm": "중소기업",
+    }
+
+    normalized = _collector().normalize(_raw(item))
+
+    assert normalized.title == "착한임대인 장관 표창 신청 연장 공고"
+    assert normalized.organization == "지방중소벤처기업청"
+    assert normalized.department == "중소벤처기업부"
+    assert normalized.category == "경영"
+    assert normalized.target == "중소기업"
+    assert normalized.description == "임대료를 인하한 임대인을 선정하는 사업입니다."
+    assert normalized.application_end == datetime(2026, 10, 31)
+    # http on the BizInfo host is upgraded.
+    assert normalized.source_url.startswith("https://www.bizinfo.go.kr/")
+
+
+def test_normalize_missing_url_falls_back_to_detail_page():
+    normalized = _collector().normalize(_raw({"pblancId": "PBLN_1", "pblancNm": "x"}))
+
+    assert normalized.source_url == (
+        "https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId=PBLN_1"
+    )
+
+
+def test_validate_rejects_empty_title():
+    collector = _collector()
+
+    assert (
+        collector.validate(collector.normalize(_raw({"pblancId": "A", "pblancNm": " "}))) is False
+    )
+
+
+def test_collect_sends_key_and_reports_complete_list():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["params"] = dict(request.url.params)
+        return httpx.Response(200, text=_fixture_text())
+
+    collector = _collector(handler)
+
+    records = list(collector.collect())
+
+    assert seen["params"] == {"crtfcKey": KEY, "dataType": "json", "searchCnt": "5000"}
+    assert len(records) == 5
+    assert collector.listed_ids == {r.external_id for r in records}
+    assert collector.complete is True
+
+
+def test_collect_truncated_response_is_not_complete():
+    body = {"jsonArray": [{"pblancId": "A", "pblancNm": "a", "totCnt": "1500"}]}
+    collector = _collector(lambda request: httpx.Response(200, json=body))
+
+    records = list(collector.collect())
+
+    assert [r.external_id for r in records] == ["A"]
+    assert collector.complete is False
+
+
+def test_collect_empty_list_is_not_complete():
+    collector = _collector(lambda request: httpx.Response(200, json={"jsonArray": []}))
+
+    assert list(collector.collect()) == []
+    assert collector.complete is False
+
+
+def test_collect_deduplicates_repeated_ids_in_one_response():
+    body = {"jsonArray": [{"pblancId": "A", "pblancNm": "a"}, {"pblancId": "A", "pblancNm": "a"}]}
+    collector = _collector(lambda request: httpx.Response(200, json=body))
+
+    assert [r.external_id for r in collector.collect()] == ["A"]
+
+
+def test_collect_without_api_key_raises():
+    collector = _collector(api_key=None)
+
+    with pytest.raises(CollectorError, match="BIZINFO_API_KEY"):
+        list(collector.collect())
+
+
+def test_collect_retries_server_errors_then_succeeds():
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return httpx.Response(503)
+        return httpx.Response(200, text=_fixture_text())
+
+    collector = _collector(handler)
+
+    assert len(list(collector.collect())) == 5
+    assert calls["n"] == 2
+
+
+def test_collect_does_not_retry_refusals():
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(429)
+
+    collector = _collector(handler)
+
+    with pytest.raises(CollectorError, match="429"):
+        list(collector.collect())
+    assert calls["n"] == 1
+
+
+def test_transport_error_message_never_contains_the_key():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"failed to connect: {request.url}")
+
+    collector = _collector(handler)
+
+    with pytest.raises(CollectorError) as excinfo:
+        list(collector.collect())
+    assert KEY not in str(excinfo.value)
+    assert "***" in str(excinfo.value)
+
+
+def test_run_persists_every_record_through_repository(monkeypatch):
+    persisted = []
+    monkeypatch.setattr(
+        "worker.repositories.support_programs.upsert_bizinfo_program", persisted.append
+    )
+    collector = _collector(lambda request: httpx.Response(200, text=_fixture_text()))
+
+    result = collector.run()
+
+    assert result.collected == 5
+    assert result.persisted == 5
+    assert result.failed == 0
+    assert [p.external_id for p in persisted][0] == "PBLN_000000000127023"

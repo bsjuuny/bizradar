@@ -8,14 +8,17 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-# 서비스(PM2)로 뜰 때만 금고를 읽는다 — worker/config.py 에 두면 테스트가 import 할 때 실제 키가 들어가
-# "키 없으면 건너뜀" 테스트가 깨졌다(2026-09-30).
-# 공용 DPAPI 금고(C:\github\.secrets)를 .env 보다 먼저 읽는다(2026-09-30). 금고에 없는 값만 .env 가 채운다.
-# 금고가 없는 환경(다른 PC·CI)에서는 조용히 건너뛰고, 열지 못하면 경고만 남긴다.
+
+# 서비스(PM2)로 뜰 때만 금고를 읽는다 — worker/config.py 에 두면 테스트가 import 할 때
+# 실제 키가 들어가 "키 없으면 건너뜀" 테스트가 깨졌다(2026-09-30).
+# 공용 DPAPI 금고(C:\github\.secrets)를 .env 보다 먼저 읽는다(2026-09-30). 금고에 없는 값만
+# .env 가 채운다. 금고가 없는 환경(다른 PC·CI)에서는 조용히 건너뛰고, 열지 못하면 경고만 남긴다.
+# 그래서 아래 worker.* import 는 일부러 이 호출 뒤에 둔다(E402).
 def _load_github_secrets(file_keys):
     import importlib.util as _ilu
     import os as _os
     import sys as _sys
+
     _path = r"C:\github\.secrets\load.py"
     if not _os.path.exists(_path):
         return
@@ -30,9 +33,10 @@ def _load_github_secrets(file_keys):
 
 _load_github_secrets(["bizradar/.env.worker"])
 
-from worker.config import get_settings
-from worker.jobs import (
+from worker.config import get_settings  # noqa: E402
+from worker.jobs import (  # noqa: E402
     analyze_job,
+    bizinfo_job,
     challenge_analyze_job,
     challenge_job,
     digest_job,
@@ -41,7 +45,7 @@ from worker.jobs import (
     kstartup_job,
     match_job,
 )
-from worker.logging_config import configure_logging
+from worker.logging_config import configure_logging  # noqa: E402
 
 configure_logging()
 logger = logging.getLogger("bizradar.worker")
@@ -65,6 +69,7 @@ def main() -> None:
     scheduler.add_job(g2b_job.run, "interval", hours=1, id="g2b-collect")
     scheduler.add_job(g2b_award_job.run, "interval", hours=6, id="g2b-award-collect")
     scheduler.add_job(kstartup_job.run, "interval", hours=1, id="kstartup-collect")
+    scheduler.add_job(bizinfo_job.run, "interval", hours=1, id="bizinfo-collect")
     scheduler.add_job(analyze_job.run, "interval", minutes=10, id="analyze")
     scheduler.add_job(match_job.run, "interval", minutes=15, id="match")
     if settings.feature_challenge and settings.challenge_collection_enabled:
@@ -93,6 +98,7 @@ def main() -> None:
                 "g2b-collect (hourly)",
                 "g2b-award-collect (every 6h, when G2B_AWARD_API_KEY is configured)",
                 "kstartup-collect (hourly, first 500 recent-first)",
+                "bizinfo-collect (hourly, when BIZINFO_API_KEY is configured)",
                 "analyze (every 10min, batch of 5)",
                 "match (every 15min, all companies x analyzed opportunities)",
                 "challenge:collect (configured cron)",

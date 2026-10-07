@@ -53,8 +53,10 @@ python supabase/tests/test_rls_phase1.py
   `/opportunities` (Project Radar), `/settings`, `/market` (admin only), `/api`.
 - `apps/web/src/lib` - `dal.ts` (data access), `supabase/` (client/server/admin clients),
   `features.ts` (`isPlatformAdmin`, feature flags), `match-explanation.ts`.
-- `worker/collectors` - `g2b.py`, `g2b_awards.py`, `kstartup.py`,
+- `worker/collectors` - `g2b.py`, `g2b_awards.py`, `kstartup.py`, `bizinfo.py`,
   `data_go_kr_challenges.py`.
+- `worker/dedupe/support_programs.py` - rule-based cross-source duplicate detection for
+  `support_programs` (기업마당 rows repeating a K-Startup announcement get `duplicate_of`).
 - `worker/ai` - `AIProvider` interface (`base.py`), `OllamaProvider` (only
   implementation), `rule_filter.py`, `schemas.py`.
 - `worker/matching/engine.py` - deterministic rule-based Match Engine (not an LLM call).
@@ -65,7 +67,8 @@ python supabase/tests/test_rls_phase1.py
 - `fixtures/` - recorded API responses for `DATA_MODE=mock` (g2b, bizinfo, kstartup,
   challenges).
 - `docs/ARCHITECTURE.md`, `docs/DATABASE.md`, `docs/DATA_PIPELINE.md`,
-  `docs/CHALLENGES.md`, `docs/TESTING.md` - read before nontrivial changes; kept in sync
+  `docs/CHALLENGES.md`, `docs/TESTING.md`, `docs/SUPPORT_PROGRAMS.md` (기업마당 + dedupe,
+  and why 중소벤처24 isn't collected) - read before nontrivial changes; kept in sync
   with what's actually implemented.
 
 ## Gotchas / conventions

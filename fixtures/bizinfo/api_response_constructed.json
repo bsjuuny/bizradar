@@ -1,0 +1,54 @@
+{
+  "jsonArray": [
+    {
+      "pblancId": "PBLN_000000000127023",
+      "pblancNm": "[경기] 2026년 10월 동행축제 소상공인 라이브커머스 참가기업 모집 공고",
+      "pblancUrl": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_000000000127023",
+      "jrsdInsttNm": "중소벤처기업부",
+      "excInsttNm": "경기지방중소벤처기업청",
+      "reqstBeginEndDe": "2026-10-02 ~ 2026-10-16",
+      "pldirSportRealmLclasCodeNm": "내수",
+      "totCnt": "5"
+    },
+    {
+      "pblancId": "PBLN_000000000126995",
+      "pblancNm": "[울산] 2026년 석유화학업 버팀이음프로젝트(석유화학업 현장 활력충전 지원) 참여 기업 모집 공고",
+      "pblancUrl": "/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_000000000126995",
+      "jrsdInsttNm": "울산광역시",
+      "excInsttNm": "기초자치단체",
+      "reqstBeginEndDe": "예산 소진시까지",
+      "pldirSportRealmLclasCodeNm": "인력",
+      "totCnt": "5"
+    },
+    {
+      "pblancId": "PBLN_000000000127013",
+      "pblancNm": "[서울ㆍ인천ㆍ경기] 2026년 미래내일 일경험(인턴형) 마케팅전략디자인 직무 참여기업 모집 공고",
+      "pblancUrl": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_000000000127013",
+      "jrsdInsttNm": "고용노동부",
+      "excInsttNm": "인사이드아웃 사회적협동조합",
+      "reqstBeginEndDe": "2026-10-02 ~ 2026-10-19",
+      "pldirSportRealmLclasCodeNm": "인력",
+      "totCnt": "5"
+    },
+    {
+      "pblancId": "PBLN_000000000126973",
+      "pblancNm": "산업통상부 2023년 12월 최초지정 혁신제품 지정기간 연장(1차 연장) 공고",
+      "pblancUrl": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_000000000126973",
+      "jrsdInsttNm": "산업통상부",
+      "excInsttNm": "직접수행",
+      "reqstBeginEndDe": "2026-10-02 ~ 2026-10-30",
+      "pldirSportRealmLclasCodeNm": "기술",
+      "totCnt": "5"
+    },
+    {
+      "pblancId": "PBLN_000000000126837",
+      "pblancNm": "[경기] 부천시 2026년 스타트업포럼(IR데모데이) 참가기업 모집 공고",
+      "pblancUrl": "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do?pblancId=PBLN_000000000126837",
+      "jrsdInsttNm": "경기도",
+      "excInsttNm": "부천산업진흥원",
+      "reqstBeginEndDe": "2026-09-28 ~ 2026-10-15",
+      "pldirSportRealmLclasCodeNm": "창업",
+      "totCnt": "5"
+    }
+  ]
+}

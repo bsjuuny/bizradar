@@ -2,12 +2,14 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/dal";
+import type { SupportSource } from "@/lib/support-display";
 
 export const DEFAULT_PAGE_SIZE = 20;
 export const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
 
 export type SupportProgramSummary = {
   id: string;
+  source: SupportSource;
   title: string;
   organization: string | null;
   supervising_type: string | null;
@@ -16,6 +18,7 @@ export type SupportProgramSummary = {
   recruiting: boolean | null;
   investment_linked: boolean;
   application_end: string | null;
+  application_period_text: string | null;
 };
 
 export type SupportProgramDetail = SupportProgramSummary & {
@@ -41,11 +44,13 @@ export async function getSupportPrograms({
   page = 1,
   q,
   investmentOnly,
+  source,
   pageSize,
 }: {
   page?: number;
   q?: string;
   investmentOnly?: boolean;
+  source?: SupportSource;
   pageSize?: number;
 } = {}): Promise<SupportProgramPage> {
   await requireUser();
@@ -66,9 +71,12 @@ export async function getSupportPrograms({
   let query = supabase
     .from("support_programs")
     .select(
-      "id, title, organization, supervising_type, category, region, recruiting, investment_linked, application_end",
+      "id, source, title, organization, supervising_type, category, region, recruiting, investment_linked, application_end, application_period_text",
       { count: "exact" },
     )
+    // 다른 출처에 같은 공고가 있어 워커가 숨긴 행(기업마당 쪽 사본) - 원본 행이 대신 보인다.
+    // worker/dedupe/support_programs.py, docs/SUPPORT_PROGRAMS.md.
+    .is("duplicate_of", null)
     // `recruiting` (rcrt_prgs_yn) first - found live: sorting by application_end
     // ascending alone put already-expired programs first (the oldest, longest-past
     // deadlines sort "smallest"), not soonest-still-open ones. `recruiting: true` rows
@@ -81,6 +89,10 @@ export async function getSupportPrograms({
 
   if (investmentOnly) {
     query = query.eq("investment_linked", true);
+  }
+
+  if (source) {
+    query = query.eq("source", source);
   }
 
   const term = q?.trim();
@@ -107,7 +119,7 @@ export async function getSupportProgram(id: string): Promise<SupportProgramDetai
   const { data, error } = await supabase
     .from("support_programs")
     .select(
-      "id, title, organization, supervising_type, category, region, recruiting, investment_linked, application_end, department, target, application_start, description, source_url",
+      "id, source, title, organization, supervising_type, category, region, recruiting, investment_linked, application_end, application_period_text, department, target, application_start, description, source_url",
     )
     .eq("id", id)
     .maybeSingle();

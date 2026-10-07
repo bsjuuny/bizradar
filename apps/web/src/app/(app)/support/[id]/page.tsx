@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSupportProgram } from "@/lib/supportPrograms";
-import { formatDate, formatDday } from "@/lib/format";
+import { formatDate } from "@/lib/format";
+import { formatSupportDeadline, supportSourceLabel } from "@/lib/support-display";
 import { InvestmentBadge } from "../investment-badge";
 
 export default async function SupportProgramDetailPage({
@@ -12,6 +13,8 @@ export default async function SupportProgramDetailPage({
   const { id } = await params;
   const program = await getSupportProgram(id);
   if (!program) notFound();
+  // 기업마당 행의 department에는 담당부서가 아니라 소관기관(부처·광역지자체)이 들어 있다.
+  const isBizinfo = program.source === "bizinfo";
 
   return (
     <div className="flex flex-col gap-6">
@@ -28,8 +31,9 @@ export default async function SupportProgramDetailPage({
             </span>
           )}
           <span className="text-xs font-medium tabular-nums text-muted-foreground">
-            {formatDday(program.application_end)}
+            {formatSupportDeadline(program.application_end, program.application_period_text)}
           </span>
+          <span className="text-xs text-muted-foreground">{supportSourceLabel(program.source)}</span>
         </div>
         <h1 className="max-w-4xl text-2xl font-semibold text-balance">{program.title}</h1>
         <p className="text-sm text-muted-foreground">{program.organization ?? "주관기관 미확인"}</p>
@@ -41,7 +45,7 @@ export default async function SupportProgramDetailPage({
           <dd>{program.organization ?? "—"}</dd>
         </div>
         <div>
-          <dt className="text-muted-foreground">담당부서</dt>
+          <dt className="text-muted-foreground">{isBizinfo ? "소관기관" : "담당부서"}</dt>
           <dd>{program.department ?? "—"}</dd>
         </div>
         <div>
@@ -50,7 +54,7 @@ export default async function SupportProgramDetailPage({
         </div>
         <div>
           <dt className="text-muted-foreground">지역</dt>
-          <dd>{program.region ?? "제한 없음"}</dd>
+          <dd>{program.region ?? (isBizinfo ? "—" : "제한 없음")}</dd>
         </div>
         <div>
           <dt className="text-muted-foreground">신청대상</dt>
@@ -68,6 +72,12 @@ export default async function SupportProgramDetailPage({
           <dt className="text-muted-foreground">접수마감</dt>
           <dd>{formatDate(program.application_end)}</dd>
         </div>
+        {program.application_period_text && (
+          <div className="sm:col-span-2">
+            <dt className="text-muted-foreground">신청기간 (원문)</dt>
+            <dd>{program.application_period_text}</dd>
+          </div>
+        )}
       </dl>
 
       {program.description && (
@@ -86,7 +96,7 @@ export default async function SupportProgramDetailPage({
           rel="noopener noreferrer"
           className="w-fit rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted"
         >
-          K-Startup 원문 보기 ↗
+          {supportSourceLabel(program.source)} 원문 보기 ↗
         </a>
       )}
     </div>

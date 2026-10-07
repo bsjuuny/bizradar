@@ -4,13 +4,26 @@ import {
   PAGE_SIZE_OPTIONS,
   getSupportPrograms,
 } from "@/lib/supportPrograms";
-import { formatDday } from "@/lib/format";
+import {
+  SUPPORT_SOURCES,
+  type SupportSource,
+  formatSupportDeadline,
+  parseSupportSource,
+  supportSourceLabel,
+} from "@/lib/support-display";
 import { InvestmentBadge } from "./investment-badge";
 
-function buildHref(page: number, q: string, investmentOnly: boolean, pageSize: number) {
+function buildHref(
+  page: number,
+  q: string,
+  investmentOnly: boolean,
+  pageSize: number,
+  source: SupportSource | undefined,
+) {
   const params = new URLSearchParams();
   if (q) params.set("q", q);
   if (investmentOnly) params.set("investment", "1");
+  if (source) params.set("source", source);
   if (pageSize !== DEFAULT_PAGE_SIZE) params.set("pageSize", String(pageSize));
   if (page > 1) params.set("page", String(page));
   const qs = params.toString();
@@ -20,11 +33,18 @@ function buildHref(page: number, q: string, investmentOnly: boolean, pageSize: n
 export default async function SupportPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; investment?: string; page?: string; pageSize?: string }>;
+  searchParams: Promise<{
+    q?: string;
+    investment?: string;
+    source?: string;
+    page?: string;
+    pageSize?: string;
+  }>;
 }) {
   const params = await searchParams;
   const q = params.q ?? "";
   const investmentOnly = params.investment === "1";
+  const source = parseSupportSource(params.source);
   const page = params.page ? Math.max(1, parseInt(params.page, 10) || 1) : 1;
   const requestedPageSize = params.pageSize ? parseInt(params.pageSize, 10) : undefined;
 
@@ -32,6 +52,7 @@ export default async function SupportPage({
     page,
     q,
     investmentOnly,
+    source,
     pageSize: requestedPageSize,
   });
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
@@ -41,7 +62,7 @@ export default async function SupportPage({
       <div className="flex items-baseline justify-between gap-4">
         <h1 className="text-2xl font-semibold tracking-tight text-balance">Support Radar</h1>
         <p className="shrink-0 text-sm text-muted-foreground">
-          K-Startup 정부지원사업{" "}
+          정부지원사업{" "}
           <span className="font-medium tabular-nums text-foreground">
             {total.toLocaleString("ko-KR")}
           </span>
@@ -52,6 +73,7 @@ export default async function SupportPage({
       <div className="flex flex-col gap-3 rounded-xl border border-border bg-card p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
         <form className="flex w-full gap-2 lg:max-w-xl" action="/support">
           {investmentOnly && <input type="hidden" name="investment" value="1" />}
+          {source && <input type="hidden" name="source" value={source} />}
           {pageSize !== DEFAULT_PAGE_SIZE && (
             <input type="hidden" name="pageSize" value={pageSize} />
           )}
@@ -70,7 +92,7 @@ export default async function SupportPage({
           </button>
           {q && (
             <Link
-              href={buildHref(1, "", investmentOnly, pageSize)}
+              href={buildHref(1, "", investmentOnly, pageSize, source)}
               className="flex shrink-0 items-center px-2 text-sm whitespace-nowrap text-muted-foreground underline underline-offset-2"
             >
               초기화
@@ -78,30 +100,54 @@ export default async function SupportPage({
           )}
         </form>
 
-        <div className="flex gap-1">
-          {(
-            [
-              [false, "전체"],
-              [true, "투자연계형만"],
-            ] as const
-          ).map(([value, label]) => {
-            const active = value === investmentOnly;
-            return (
-              <Link
-                key={label}
-                href={buildHref(1, q, value, pageSize)}
-                aria-current={active ? "page" : undefined}
-                className={
-                  "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors " +
-                  (active
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground")
-                }
-              >
-                {label}
-              </Link>
-            );
-          })}
+        <div className="flex flex-wrap gap-3">
+          <div className="flex gap-1">
+            {(
+              [
+                [false, "전체"],
+                [true, "투자연계형만"],
+              ] as const
+            ).map(([value, label]) => {
+              const active = value === investmentOnly;
+              return (
+                <Link
+                  key={label}
+                  href={buildHref(1, q, value, pageSize, source)}
+                  aria-current={active ? "page" : undefined}
+                  className={
+                    "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors " +
+                    (active
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground")
+                  }
+                >
+                  {label}
+                </Link>
+              );
+            })}
+          </div>
+
+          <div className="flex gap-1">
+            {([undefined, ...SUPPORT_SOURCES] as const).map((value) => {
+              const active = value === source;
+              const label = value ? supportSourceLabel(value) : "모든 출처";
+              return (
+                <Link
+                  key={label}
+                  href={buildHref(1, q, investmentOnly, pageSize, value)}
+                  aria-current={active ? "page" : undefined}
+                  className={
+                    "shrink-0 rounded-md px-3 py-1.5 text-sm font-medium whitespace-nowrap transition-colors " +
+                    (active
+                      ? "bg-primary text-primary-foreground"
+                      : "text-muted-foreground hover:bg-muted hover:text-foreground")
+                  }
+                >
+                  {label}
+                </Link>
+              );
+            })}
+          </div>
         </div>
       </div>
 
@@ -111,7 +157,7 @@ export default async function SupportPage({
             <>
               <p>&ldquo;{q}&rdquo;에 대한 검색 결과가 없습니다.</p>
               <Link
-                href={buildHref(1, "", investmentOnly, pageSize)}
+                href={buildHref(1, "", investmentOnly, pageSize, source)}
                 className="mt-2 inline-block underline underline-offset-2"
               >
                 전체 사업 보기
@@ -160,6 +206,9 @@ export default async function SupportPage({
                       >
                         {item.title}
                       </Link>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                        {supportSourceLabel(item.source)}
+                      </span>
                     </td>
                     <td className="px-4 py-3">
                       <InvestmentBadge linked={item.investment_linked} />
@@ -174,7 +223,7 @@ export default async function SupportPage({
                       {item.region ?? "—"}
                     </td>
                     <td className="px-4 py-3 tabular-nums whitespace-nowrap">
-                      {formatDday(item.application_end)}
+                      {formatSupportDeadline(item.application_end, item.application_period_text)}
                     </td>
                   </tr>
                 ))}
@@ -196,7 +245,7 @@ export default async function SupportPage({
                     return (
                       <Link
                         key={size}
-                        href={buildHref(1, q, investmentOnly, size)}
+                        href={buildHref(1, q, investmentOnly, size, source)}
                         aria-current={active ? "page" : undefined}
                         className={
                           "rounded px-2 py-1 text-xs font-medium tabular-nums transition-colors " +
@@ -215,7 +264,7 @@ export default async function SupportPage({
             <div className="flex gap-4">
               {page > 1 ? (
                 <Link
-                  href={buildHref(page - 1, q, investmentOnly, pageSize)}
+                  href={buildHref(page - 1, q, investmentOnly, pageSize, source)}
                   className="underline underline-offset-2"
                 >
                   이전
@@ -225,7 +274,7 @@ export default async function SupportPage({
               )}
               {page < totalPages ? (
                 <Link
-                  href={buildHref(page + 1, q, investmentOnly, pageSize)}
+                  href={buildHref(page + 1, q, investmentOnly, pageSize, source)}
                   className="underline underline-offset-2"
                 >
                   다음
