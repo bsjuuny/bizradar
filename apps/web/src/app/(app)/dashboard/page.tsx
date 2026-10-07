@@ -145,7 +145,7 @@ export default async function DashboardPage() {
               <Link href="/support" className="group rounded-2xl border border-border bg-card p-5 transition hover:-translate-y-0.5 hover:shadow-sm">
                 <p className="text-xs font-medium text-muted-foreground">SUPPORT RADAR</p>
                 <h2 className="mt-2 text-lg font-semibold">정부지원사업 찾기</h2>
-                <p className="mt-1 text-sm text-muted-foreground">TIPS 등 투자연계형 프로그램을 포함한 K-Startup 공고를 확인합니다.</p>
+                <p className="mt-1 text-sm text-muted-foreground">K-Startup·기업마당 공고를 모집 상태, IT 관련, 지원분야로 골라 봅니다.</p>
                 <span className="mt-4 inline-block text-sm font-medium group-hover:underline">바로가기 →</span>
               </Link>
               {challengeEnabled && (

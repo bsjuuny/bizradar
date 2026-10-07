@@ -119,3 +119,14 @@ def test_full_width_parentheses_are_treated_like_ascii_ones():
         "의료기기 부품 국산화 지원사업 공고"
         "（AI 빅데이터 기반 의료바이오 첨단기기 연구제조센터 구축사업）"
     )
+
+
+def test_latin_keywords_ignore_case_and_chatgpt_spacing():
+    assert is_it_related("ai 스타트업 육성")
+    assert is_it_related("SAAS 도입 지원")
+    assert is_it_related("Chat GPT 활용 교육")
+
+
+def test_business_commercialization_marker_is_not_a_funding_project():
+    # "(AI 사업화 분야)" is a field marker - 사업화 is not a project name.
+    assert is_it_related("2026년 창업기업 모집 공고(AI 사업화 분야)")

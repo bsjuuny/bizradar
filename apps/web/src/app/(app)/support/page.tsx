@@ -20,6 +20,7 @@ import {
   parseSupportStatus,
   supportSourceLabel,
 } from "@/lib/support-display";
+import { type SearchParams, one } from "@/lib/search-params";
 import { InvestmentBadge } from "./investment-badge";
 
 type ListState = {
@@ -87,29 +88,21 @@ function FilterGroup({ label, children }: { label: string; children: ReactNode }
   );
 }
 
-type SearchParams = Record<string, string | string[] | undefined>;
-
-// A repeated key (?q=a&q=b) arrives as an array; only the first value counts.
-function first(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
-
 export default async function SupportPage({
   searchParams,
 }: {
   searchParams: Promise<SearchParams>;
 }) {
+  // one(): a repeated key (?q=a&q=b) arrives as an array; only the first value counts.
   const params = await searchParams;
-  const q = first(params.q) ?? "";
-  const status = parseSupportStatus(first(params.status));
-  const itOnly = first(params.it) === "1";
-  const investmentOnly = first(params.investment) === "1";
-  const source = parseSupportSource(first(params.source));
-  const field = parseSupportField(first(params.field))?.key;
-  const rawPage = first(params.page);
-  const page = rawPage ? Math.max(1, parseInt(rawPage, 10) || 1) : 1;
-  const rawPageSize = first(params.pageSize);
-  const requestedPageSize = rawPageSize ? parseInt(rawPageSize, 10) : undefined;
+  const q = one(params.q);
+  const status = parseSupportStatus(one(params.status));
+  const itOnly = one(params.it) === "1";
+  const investmentOnly = one(params.investment) === "1";
+  const source = parseSupportSource(one(params.source));
+  const field = parseSupportField(one(params.field))?.key;
+  const page = Math.max(1, parseInt(one(params.page), 10) || 1);
+  const requestedPageSize = parseInt(one(params.pageSize), 10) || undefined;
 
   const { items, total, pageSize } = await getSupportPrograms({
     page,
@@ -256,7 +249,7 @@ export default async function SupportPage({
               </Link>
             </>
           ) : (
-            <p>모집 중인 지원사업이 없습니다. 수집기가 매시 정각에 실행됩니다.</p>
+            <p>모집 중인 지원사업이 없습니다. 수집기가 1시간마다 새 공고를 가져옵니다.</p>
           )}
         </div>
       ) : (
@@ -315,7 +308,9 @@ export default async function SupportPage({
                     <td className="px-4 py-3 whitespace-nowrap text-muted-foreground">
                       {item.region ?? "—"}
                     </td>
-                    <td className="px-4 py-3 tabular-nums whitespace-nowrap">
+                    {/* Wraps: besides a short D-day this can be 기업마당's free-form
+                        신청기간 text, which may be long. */}
+                    <td className="max-w-44 px-4 py-3 tabular-nums break-keep">
                       {formatSupportDeadline(
                         item.application_end,
                         item.application_period_text,

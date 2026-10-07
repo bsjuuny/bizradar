@@ -48,7 +48,7 @@ class FakeRepo:
         self.closed_with = set(listed_ids)
         return 0
 
-    def fetch_open_kstartup_titles(self, today):
+    def fetch_open_kstartup_titles(self):
         return self.kstartup
 
     def fetch_open_bizinfo_titles(self):
@@ -141,7 +141,7 @@ def test_close_failure_does_not_stop_dedupe(monkeypatch, configured, caplog):
 def test_dedupe_failure_is_logged_not_raised(monkeypatch, configured, caplog):
     monkeypatch.setattr(bizinfo_job, "BizInfoCollector", lambda: FakeCollector())
 
-    def broken_fetch(today):
+    def broken_fetch():
         raise RuntimeError("db down")
 
     configured.fetch_open_kstartup_titles = broken_fetch

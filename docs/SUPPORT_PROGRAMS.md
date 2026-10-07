@@ -62,13 +62,18 @@ matched with the rule in "Dedupe" below.
 - Retries (transport errors, 5xx) wait 2 s then 5 s; 4xx is not retried. `content_hash`
   leaves out `inqireCo` (view count) and `totCnt` (list size), which change every fetch.
 - Only changed rows are written: the stored `(content_hash, recruiting)` is read once per
-  run and a posting that matches is skipped - nearly all of the ~1,450 are, every hour.
-  Rule changes don't show up in either value; they reach stored rows via reclassify.
-- Scheduled at a 35-minute offset from the top-of-the-hour job group. At :08 alongside the
-  others, 26-30 of ~1,450 upserts per run failed with the worker's long-standing
-  intermittent `WinError 10035`. Its likely cause - one process-wide Supabase client
-  shared by concurrent jobs - is fixed too: `get_service_client()` is now one client per
-  thread (`worker/repositories/opportunities.py`).
+  run (if that read fails, every row is written) and a posting that matches is skipped -
+  nearly all of the ~1,450 are, every hour. `content_hash` covers the stable payload *and*
+  every derived column except `recruiting`, so a change to `normalize()` or to a rule
+  reaches every listed row on the next run; only closed rows (never re-sent) need
+  reclassify. The job logs `written` (actually sent) next to `persisted` (accepted,
+  including the skipped `unchanged`).
+- Scheduled at a 35-minute offset from the top-of-the-hour job group, to spread load. At
+  :08 alongside the others, 26-30 of ~1,450 upserts per run failed with the worker's
+  long-standing intermittent `WinError 10035`. The fixes for that are writing only changed
+  rows (above) and one Supabase client per thread (`get_service_client()` in
+  `worker/repositories/opportunities.py`; it used to be one process-wide client shared by
+  concurrent jobs).
 - `source_url` must be an http(s) URL on bizinfo.go.kr; anything else falls back to the
   detail page built from the id (it becomes the "원문 보기" link).
 - Mapping: `organization` = 수행기관 unless it is the placeholder "직접수행"/"기초자치단체",
@@ -87,12 +92,16 @@ matched with the rule in "Dedupe" below.
   hiccup can't close announcements that are still open.
 - Entity decoding (`decode_entities` in `worker/collectors/base.py`) only expands
   `;`-terminated references; `html.unescape` alone also expands legacy forms without `;`
-  and turns a URL's `&notice=1` into `¬ice=1`. URL fields are never decoded.
+  and turns a URL's `&notice=1` into `¬ice=1`. Named references must be exact HTML5
+  names ("&notice;" stays as is). URL fields are never decoded.
+- 사업개요 HTML: `<br>` (any attributes) and closing block tags become line breaks, table
+  cells end with a space, other tags vanish without a gap.
 
 ## Dedupe - `worker/dedupe/support_programs.py`
 
 A 기업마당 row that repeats an open K-Startup announcement gets `duplicate_of` = the
-K-Startup row's id; `/support` lists only `duplicate_of is null`. K-Startup is the row kept
+K-Startup row's id. That is a pairing, not a hide flag: whether `/support` hides the copy is
+decided per view at query time (see "Web"). K-Startup is the row kept
 (original posting, more fields). Rows are never deleted - collection only upserts, so a
 deleted row would come back next hour, and `raw_payload` is the evidence if a match is wrong.
 
@@ -102,8 +111,14 @@ K-Startup wraps names in 「」 or moves "4차" to the end, spacing/punctuation 
    (U+318D), which the regex engine treats as a Hangul letter, not punctuation - and a
    trailing (재/수정/변경/연장)공고; lowercase;
 2. the set of numbers in both titles must be equal (separates "2차" from "3차" of a
-   recurring program, which otherwise score 0.85+);
-3. both have a deadline: same day, bigram overlap coefficient >= 0.8 and Jaccard >= 0.55
+   recurring program, which otherwise score 0.85+), after unifying "1,000" -> "1000" and
+   "'26년" -> "2026년";
+3. regions, when both are specific, must share a 시·도 (권역 words such as 수도권 are
+   expanded; 전국/unknown never block). Generic titles recur in every region - a Seoul
+   incubator's "2026년 창업보육센터 입주기업 모집" and "[대전] ... 모집 공고" score 1.0/1.0.
+   All 17 measured pairs agree on region or have one side 전국/untagged. Organization names
+   are not compared: they differ in 7 of the 17 true pairs;
+4. both have a deadline: same day, bigram overlap coefficient >= 0.8 and Jaccard >= 0.55
    (the same day alone isn't proof - month-end deadlines are common, and a short generic
    title is nearly a subset of a longer unrelated one; weakest true dated pair: 0.62);
    either lacks one: overlap >= 0.9 **and** Jaccard >= 0.65.
@@ -118,9 +133,9 @@ visible twice.
 The pass runs at the end of every BizInfo job run (`worker/jobs/bizinfo_job.py`) - also
 when collection was skipped (no key) or failed, so marks never go stale - over open
 K-Startup rows and recruiting BizInfo rows, and writes only rows whose mark changes,
-including clearing stale marks. "Open" is exactly the web's default 모집 중 definition
-(recruiting, and no deadline or one not yet passed): the kept K-Startup row must itself
-be visible wherever its 기업마당 copy is hidden, or the program disappears from that view.
+including clearing stale marks. "Open" K-Startup rows are read from
+`support_programs_listing.is_open` - the single SQL definition of 모집 중
+(`support_program_is_open()`), which the web filters on too.
 A K-Startup row collected between BizInfo runs is picked up within the hour.
 
 ## Schema - `supabase/migrations/20261007100000_bizinfo_support_programs.sql`
@@ -134,10 +149,12 @@ A K-Startup row collected between BizInfo runs is picked up within the hour.
 ## Web
 
 `/support` reads the `support_programs_listing` view
-(`supabase/migrations/20261007130000_support_programs_listing.sql`): every row plus, for a
-paired 기업마당 copy, `original_open` (is the K-Startup original in the 모집 중 view *right
-now*) and `original_end`. A copy is hidden only when its original is itself in the same
-result:
+(`supabase/migrations/20261007130000_support_programs_listing.sql`): every row plus its
+`is_open` and, for a paired 기업마당 copy, `original_open` (is the K-Startup original open
+*right now*) and `original_end`. "모집 중" anywhere - this page, "7일 안에 마감", the
+worker's pairing - is `is_open`, i.e. the SQL function `support_program_is_open()`: one
+definition, so the three can't drift. A copy is hidden only when its original is itself
+in the same result:
 
 - status-only views: `duplicate_of is null or original_open is false`; for "7일 안에 마감"
   the original's deadline must also fall in the window, or the copy stays.
@@ -160,7 +177,7 @@ Filters (all plain links / GET params, no client JS - same pattern as `/opportun
 
 | Filter | Param | Meaning |
 | --- | --- | --- |
-| 상태 (default 모집 중) | `status=open\|closing\|all` | open = `recruiting` and (no deadline or deadline >= today, Asia/Seoul). The date check is there because K-Startup's own 모집 flag lags its deadline (16 rows on 2026-10-07). closing = open with a deadline within 7 days. all = including closed. |
+| 상태 (default 모집 중) | `status=open\|closing\|all` | open = `is_open`: `recruiting` and (no deadline or deadline >= today, Asia/Seoul) - `support_program_is_open()` in SQL. The date check is there because K-Startup's own 모집 flag lags its deadline (16 rows on 2026-10-07). closing = open with a deadline within 7 days. all = including closed. |
 | 출처 | `source=kstartup\|bizinfo` | |
 | IT 관련만 | `it=1` | `it_related` (see "IT filter") |
 | 투자연계형만 | `investment=1` | `investment_linked` |
@@ -235,8 +252,8 @@ Steps 1-4 were done 2026-10-07. The changes after it (filters, review fixes) add
 migrations - `20261007120000_support_programs_it_related.sql` and
 `20261007130000_support_programs_listing.sql` - and roll out the same way:
 
-1. `npx supabase db push` (both) - before the web deploy (it reads the view and
-   `it_related`) **and** before any worker restart (the collectors now write `it_related`;
+1. `npx supabase db push` (both; the second also creates the `support_program_is_open()`
+   function) - before the web deploy (it reads the view and `it_related`) **and** before any worker restart (the collectors now write `it_related`;
    against the old schema every upsert fails).
 2. `python -m worker.jobs.support_reclassify --dry-run`, then without `--dry-run` - fills
    `it_related` and re-normalizes stored text (K-Startup entities, whitespace); until then

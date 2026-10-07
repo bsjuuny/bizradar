@@ -74,14 +74,17 @@ def fetch_bizinfo_state() -> dict[str, tuple[str, bool | None]]:
 
 
 def _select_all(build_query: Any) -> list[dict[str, Any]]:
+    """Every page of an ordered select. Advances by the rows actually received and stops
+    only on an empty page, so a server max-rows below PAGE_SIZE can't silently truncate
+    (same guard as match_scores._fetch_all_pages, which hit that live on 2026-09-17)."""
     rows: list[dict[str, Any]] = []
-    start = 0
+    offset = 0
     while True:
-        batch = build_query().range(start, start + PAGE_SIZE - 1).execute().data or []
-        rows.extend(batch)
-        if len(batch) < PAGE_SIZE:
+        batch = build_query().range(offset, offset + PAGE_SIZE - 1).execute().data or []
+        if not batch:
             return rows
-        start += PAGE_SIZE
+        rows.extend(batch)
+        offset += len(batch)
 
 
 def close_unlisted_bizinfo(listed_ids: Iterable[str]) -> int:
@@ -110,24 +113,28 @@ def _to_date(value: str | None) -> date | None:
     return datetime.fromisoformat(value).date() if value else None
 
 
-def fetch_open_kstartup_titles(today: date) -> list[ProgramTitle]:
-    """K-Startup rows that Support Radar's default "모집 중" view shows: recruiting and no
-    deadline or one not yet passed - the same definition as getSupportPrograms() in
-    apps/web/src/lib/supportPrograms.ts. It has to be the same: a 기업마당 copy is hidden in
-    favour of its K-Startup row, so if the K-Startup row weren't visible in that view, the
-    program would vanish from it entirely."""
+def _program_title(row: Mapping[str, Any]) -> ProgramTitle:
+    return ProgramTitle(
+        row["id"], row["title"], _to_date(row["application_end"]), row.get("region")
+    )
+
+
+def fetch_open_kstartup_titles() -> list[ProgramTitle]:
+    """K-Startup rows that are open right now - support_programs_listing.is_open, the one
+    definition of "모집 중" that the web's default view filters on too
+    (supabase/migrations/20261007130000_support_programs_listing.sql). A 기업마당 copy is
+    paired only with an original that this view would actually show."""
     client = get_service_client()
     rows = _select_all(
         lambda: (
-            client.table("support_programs")
-            .select("id, title, application_end")
+            client.table("support_programs_listing")
+            .select("id, title, application_end, region")
             .eq("source", "kstartup")
-            .eq("recruiting", True)
-            .or_(f"application_end.is.null,application_end.gte.{today.isoformat()}")
+            .eq("is_open", True)
             .order("id")
         )
     )
-    return [ProgramTitle(row["id"], row["title"], _to_date(row["application_end"])) for row in rows]
+    return [_program_title(row) for row in rows]
 
 
 def fetch_open_bizinfo_titles() -> tuple[list[ProgramTitle], dict[str, str | None]]:
@@ -136,16 +143,13 @@ def fetch_open_bizinfo_titles() -> tuple[list[ProgramTitle], dict[str, str | Non
     rows = _select_all(
         lambda: (
             client.table("support_programs")
-            .select("id, title, application_end, duplicate_of")
+            .select("id, title, application_end, region, duplicate_of")
             .eq("source", "bizinfo")
             .eq("recruiting", True)
             .order("id")
         )
     )
-    titles = [
-        ProgramTitle(row["id"], row["title"], _to_date(row["application_end"])) for row in rows
-    ]
-    return titles, {row["id"]: row["duplicate_of"] for row in rows}
+    return [_program_title(row) for row in rows], {row["id"]: row["duplicate_of"] for row in rows}
 
 
 def set_duplicate_of(changes: Mapping[str, str | None]) -> None:

@@ -97,17 +97,15 @@ export async function getSupportPrograms({
     .order("id", { ascending: true })
     .range(from, to);
 
-  // support-display.ts의 SUPPORT_STATUSES 설명 참고. application_end는 날짜만 의미 있는
-  // 값(자정)이라 Asia/Seoul 오늘 날짜와 비교한다.
+  // "모집 중"은 DB의 is_open(support_program_is_open) 하나로 정한다 - 워커의 중복 짝짓기도
+  // 같은 정의를 쓴다. "7일 안에 마감"은 그중 마감일이 Asia/Seoul 오늘부터 7일 안인 것.
+  // application_end는 날짜만 의미 있는 값(자정)이라 날짜 문자열과 비교한다.
   const today = seoulDateKey();
   const closingLimit = seoulDateKey(new Date(), CLOSING_SOON_DAYS);
   if (status !== "all") {
-    query = query.eq("recruiting", true);
+    query = query.eq("is_open", true);
     if (status === "closing") {
       query = query.gte("application_end", today).lte("application_end", closingLimit);
-    } else {
-      // 검색어 조건도 .or()를 쓰지만, 두 or 파라미터는 AND로 묶인다(2026-10-07 실측).
-      query = query.or(`application_end.is.null,application_end.gte.${today}`);
     }
   }
 

@@ -58,10 +58,11 @@ def main() -> None:
     scheduler.add_job(g2b_job.run, "interval", hours=1, id="g2b-collect")
     scheduler.add_job(g2b_award_job.run, "interval", hours=6, id="g2b-award-collect")
     scheduler.add_job(kstartup_job.run, "interval", hours=1, id="kstartup-collect")
-    # Offset from the top-of-the-hour group: ~1,450 upserts through the one shared
-    # Supabase client while 4-5 other jobs use it is when the worker's intermittent
-    # "WinError 10035" socket failures hit (26-30 BizInfo rows per run on 2026-10-07, at
-    # :08 alongside the others). :35 has no other interval job (analyze :x0, match :x5).
+    # Offset from the top-of-the-hour group (:35 has no other interval job; analyze runs
+    # at :x0, match at :x5) just to spread load. It was the first workaround for the
+    # intermittent "WinError 10035" failures (26-30 BizInfo rows per run on 2026-10-07,
+    # at :08 alongside the others); the actual fixes are the per-thread Supabase client
+    # (repositories/opportunities.py) and writing only changed rows (BizInfoCollector).
     scheduler.add_job(
         bizinfo_job.run,
         "interval",

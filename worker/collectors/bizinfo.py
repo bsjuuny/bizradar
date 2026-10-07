@@ -106,7 +106,11 @@ _REGION_WORDS = frozenset(
 _REGION_TAG = re.compile(r"^\s*\[([^\]]+)\]")
 _REGION_SEPARATORS = re.compile(r"\s*[ㆍ·・,/]\s*")
 _PERIOD = re.compile(r"^(\d{4})[.-]?(\d{2})[.-]?(\d{2})\s*~\s*(\d{4})[.-]?(\d{2})[.-]?(\d{2})$")
-_BLOCK_END_TAGS = re.compile(r"<\s*(br|/p|/div|/li|/tr|/h\d)\s*/?\s*>", re.IGNORECASE)
+# Line breaks: <br> (any attributes) and the end of block elements. Table cells end with
+# a space so "<td>지원대상</td><td>중소기업</td>" doesn't read "지원대상중소기업". Other
+# (inline) tags vanish without a gap - "<b>지원</b>대상" is one word.
+_LINE_BREAK_TAGS = re.compile(r"<\s*br\b[^>]*>|<\s*/\s*(?:p|div|li|tr|h\d)\s*>", re.IGNORECASE)
+_CELL_END_TAGS = re.compile(r"<\s*/\s*(?:td|th)\s*>", re.IGNORECASE)
 _TAGS = re.compile(r"<[^>]+>")
 
 
@@ -162,7 +166,8 @@ def _total_count(item: dict[str, Any]) -> int | None:
 
 def html_to_text(value: str) -> str:
     """사업개요(bsnsSumryCn)는 HTML이 섞여 온다 - 줄바꿈은 살리고 태그는 지운다."""
-    text = _BLOCK_END_TAGS.sub("\n", value)
+    text = _LINE_BREAK_TAGS.sub("\n", value)
+    text = _CELL_END_TAGS.sub(" ", text)
     text = decode_entities(_TAGS.sub("", text))
     lines = (" ".join(line.split()) for line in text.splitlines())
     return "\n".join(line for line in lines if line)
@@ -389,27 +394,42 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         # 마감이다. 목록에서 내려간 공고는 job이 따로 마감 처리한다(module docstring).
         recruiting = not (period is not None and period[1] < today)
 
+        derived: dict[str, Any] = {
+            "title": title,
+            "organization": organization or None,
+            "department": jurisdiction or None,
+            "category": _field(item, "pldirSportRealmLclasCodeNm", "lcategory") or None,
+            "region": parse_region(title),
+            "target": _field(item, "trgetNm") or None,
+            "investment_linked": is_investment_linked(title, description),
+            "it_related": is_it_related(title),
+            # Naive midnight, same convention as K-Startup's YYYYMMDD dates.
+            "application_start": datetime.combine(period[0], datetime.min.time())
+            if period
+            else None,
+            "application_end": datetime.combine(period[1], datetime.min.time()) if period else None,
+            "application_period_text": period_text or None,
+            "description": description,
+            "source_url": _absolute_url(_url_field(item, "pblancUrl", "link"), raw.external_id),
+        }
+        # content_hash covers the stable payload *and* every derived column except
+        # recruiting (compared separately in persist()): a change to normalize() or to a
+        # rule therefore changes the hash, and listed rows pick it up on the next run
+        # without anyone remembering to reclassify.
+        content_hash = compute_content_hash(
+            {
+                "payload": {k: v for k, v in item.items() if k not in _VOLATILE_FIELDS},
+                "derived": {
+                    k: v.isoformat() if isinstance(v, datetime) else v for k, v in derived.items()
+                },
+            }
+        )
         return BizInfoNormalizedProgram(
             external_id=raw.external_id,
-            title=title,
-            organization=organization or None,
-            department=jurisdiction or None,
-            category=_field(item, "pldirSportRealmLclasCodeNm", "lcategory") or None,
-            region=parse_region(title),
-            target=_field(item, "trgetNm") or None,
             recruiting=recruiting,
-            investment_linked=is_investment_linked(title, description),
-            it_related=is_it_related(title),
-            # Naive midnight, same convention as K-Startup's YYYYMMDD dates.
-            application_start=datetime.combine(period[0], datetime.min.time()) if period else None,
-            application_end=datetime.combine(period[1], datetime.min.time()) if period else None,
-            application_period_text=period_text or None,
-            description=description,
-            source_url=_absolute_url(_url_field(item, "pblancUrl", "link"), raw.external_id),
-            content_hash=compute_content_hash(
-                {key: value for key, value in item.items() if key not in _VOLATILE_FIELDS}
-            ),
+            content_hash=content_hash,
             raw_payload=item,
+            **derived,
         )
 
     def validate(self, normalized: BizInfoNormalizedProgram) -> bool:
@@ -419,15 +439,24 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         """Skips the upsert when the stored row has the same content_hash and recruiting
         state - every open posting is in every hourly response, and nearly all of them are
         unchanged. That turns ~1,450 single-row requests per run into a handful, and keeps
-        updated_at meaning "changed". Rule changes (it_related etc.) don't move either
-        value; those reach stored rows through worker/jobs/support_reclassify.py."""
+        updated_at meaning "changed". content_hash includes the derived columns (see
+        normalize()), so collector/rule changes still reach every listed row; closed rows
+        that are never re-sent need worker/jobs/support_reclassify.py."""
         from worker.repositories.support_programs import (
             fetch_bizinfo_state,
             upsert_bizinfo_program,
         )
 
         if self._stored is None:
-            self._stored = fetch_bizinfo_state()
+            try:
+                self._stored = fetch_bizinfo_state()
+            except Exception:
+                # Read once per run, not once per record: on failure, write every row.
+                logger.warning(
+                    "bizinfo: could not read stored state - writing every row this run",
+                    exc_info=True,
+                )
+                self._stored = {}
         stored = self._stored.get(normalized.external_id)
         if stored == (normalized.content_hash, normalized.recruiting):
             self.unchanged += 1

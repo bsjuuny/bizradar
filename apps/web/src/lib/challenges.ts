@@ -2,6 +2,7 @@ import "server-only";
 
 import { requireUser } from "@/lib/dal";
 import { escapeLikeTerm } from "@/lib/postgrest";
+import { type SearchParams, enumValue, one } from "@/lib/search-params";
 import { createClient } from "@/lib/supabase/server";
 
 export const CHALLENGE_PAGE_SIZE = 12;
@@ -123,15 +124,6 @@ export type ChallengePage = {
   pageSize: number;
 };
 
-type SearchParams = Record<string, string | string[] | undefined>;
-
-function one(value: string | string[] | undefined): string {
-  return Array.isArray(value) ? (value[0] ?? "") : (value ?? "");
-}
-
-function enumValue<T extends string>(value: string, allowed: readonly T[]): T | undefined {
-  return allowed.includes(value as T) ? (value as T) : undefined;
-}
 
 export function parseChallengeFilters(params: SearchParams): ChallengeFilters {
   const rawPage = Number.parseInt(one(params.page), 10);

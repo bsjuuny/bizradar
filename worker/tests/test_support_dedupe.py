@@ -192,3 +192,25 @@ def test_hangul_and_latin_middle_dots_normalize_the_same():
 def test_same_deadline_alone_does_not_make_a_short_title_a_duplicate(keep_title, hide_title):
     end = date(2026, 10, 31)
     assert not is_same_program(_p(hide_title, end), _p(keep_title, end))
+
+
+def test_generic_title_in_different_regions_is_not_the_same_program():
+    # Constructed, per the review: one Seoul incubator vs a 대전 posting, same wording.
+    seoul = ProgramTitle("ks", "2026년 창업보육센터 입주기업 모집", None, "서울")
+    daejeon = ProgramTitle("bz", "[대전] 2026년 창업보육센터 입주기업 모집 공고", None, "대전")
+    nationwide = ProgramTitle("ks2", "2026년 창업보육센터 입주기업 모집", None, "전국")
+    metro = ProgramTitle(
+        "bz2", "[서울ㆍ인천ㆍ경기] 2026년 창업보육센터 입주기업 모집 공고", None, "서울·인천·경기"
+    )
+
+    assert not is_same_program(daejeon, seoul)
+    assert is_same_program(daejeon, nationwide)  # 전국 says nothing specific
+    assert is_same_program(metro, seoul)  # overlapping regions
+
+
+def test_numbers_written_differently_still_compare_equal():
+    a = _p("2026년 1,000만원 지원 창업 프로그램", None)
+    b = _p("2026년 1000만원 지원 창업 프로그램 모집 공고", None)
+    c = _p("'26년 1000만원 지원 창업 프로그램 모집 공고", None)
+    assert is_same_program(a, b)
+    assert a.numbers == c.numbers == frozenset({"2026", "1000"})

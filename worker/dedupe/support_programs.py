@@ -26,6 +26,12 @@ as character-bigram sets:
 - when either side has no deadline (65% of 기업마당 postings say "예산 소진시까지"),
   overlap >= 0.9 and Jaccard >= 0.65: the one false pair scored overlap 0.95 but Jaccard
   0.59, the weakest true date-less pair 0.70.
+- regions, when both are specific, must overlap: generic titles recur in every region
+  ("[대전] 2026년 창업보육센터 입주기업 모집 공고" vs a Seoul incubator's "2026년
+  창업보육센터 입주기업 모집" scores 1.0/1.0). All 17 measured pairs agree on region
+  (서울/서울, 경기/경기) or have one side 전국/untagged. Organization names are not used:
+  they differ in 7 of the 17 true pairs (e.g. 수행기관 "창업진흥원" vs K-Startup's
+  "중소벤처기업부 장관").
 """
 
 from __future__ import annotations
@@ -47,6 +53,50 @@ _LEADING_TAGS = re.compile(r"^\s*(\[[^\]]*\]\s*)+")
 _NON_WORD = re.compile(r"[\s\W_ㆍ]+")
 _TRAILING_NOTICE = re.compile(r"(재|수정|변경|연장)?공고(문)?$")
 _NUMBERS = re.compile(r"\d+")
+_THOUSANDS_SEPARATOR = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
+_SHORT_YEAR = re.compile(r"[''‘’](\d{2})(?=\s*년)")
+
+# Region words as both sources write them, expanded to the 시·도 they cover. A pair whose
+# regions are both specific and share no 시·도 is not the same program: generic titles
+# ("2026년 창업보육센터 입주기업 모집") recur in every region. "전국"/"비수도권" and unknown
+# words say nothing specific, so they never block a match.
+_REGION_EXPANSION = {
+    "수도권": {"서울", "인천", "경기"},
+    "충청": {"대전", "세종", "충북", "충남"},
+    "충청권": {"대전", "세종", "충북", "충남"},
+    "호남권": {"광주", "전남", "전북", "전남광주"},
+    "영남권": {"부산", "대구", "울산", "경북", "경남"},
+    "전남광주": {"전남광주", "전남", "광주"},
+    "광주": {"광주", "전남광주"},
+    "전남": {"전남", "전남광주"},
+}
+_SPECIFIC_REGIONS = frozenset(
+    {"서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기", "강원"}
+    | {"충북", "충남", "전북", "전남", "경북", "경남", "제주", "전남광주"}
+)
+
+
+def _region_set(region: str | None) -> frozenset[str]:
+    """The 시·도 a region value covers, or an empty set when it isn't specific."""
+    if not region:
+        return frozenset()
+    covered: set[str] = set()
+    for word in re.split(r"[·ㆍ,/\s]+", region):
+        if word in _REGION_EXPANSION:
+            covered |= _REGION_EXPANSION[word]
+        elif word in _SPECIFIC_REGIONS:
+            covered.add(word)
+        elif word:
+            return frozenset()  # 전국, 비수도권, anything unknown: not specific
+    return frozenset(covered)
+
+
+def _title_numbers(title: str) -> frozenset[str]:
+    # The same number written two ways must compare equal: "1,000만원" vs "1000만원",
+    # "'26년" vs "2026년".
+    text = _THOUSANDS_SEPARATOR.sub("", title)
+    text = _SHORT_YEAR.sub(lambda match: "20" + match.group(1), text)
+    return frozenset(_NUMBERS.findall(text))
 
 
 @dataclass(frozen=True)
@@ -54,15 +104,18 @@ class ProgramTitle:
     id: str
     title: str
     application_end: date | None
+    region: str | None = None
     normalized: str = field(init=False, compare=False)
     bigrams: frozenset[str] = field(init=False, compare=False)
     numbers: frozenset[str] = field(init=False, compare=False)
+    regions: frozenset[str] = field(init=False, compare=False)
 
     def __post_init__(self) -> None:
         normalized = normalize_title(self.title)
         object.__setattr__(self, "normalized", normalized)
         object.__setattr__(self, "bigrams", _bigrams(normalized))
-        object.__setattr__(self, "numbers", frozenset(_NUMBERS.findall(self.title)))
+        object.__setattr__(self, "numbers", _title_numbers(self.title))
+        object.__setattr__(self, "regions", _region_set(self.region))
 
 
 def normalize_title(title: str) -> str:
@@ -88,6 +141,8 @@ def similarity(a: ProgramTitle, b: ProgramTitle) -> tuple[float, float]:
 def match_score(a: ProgramTitle, b: ProgramTitle) -> tuple[float, float] | None:
     """(overlap, Jaccard) when the two rows are the same program, else None."""
     if a.numbers != b.numbers:
+        return None
+    if a.regions and b.regions and not (a.regions & b.regions):
         return None
     if a.application_end is not None and b.application_end is not None:
         if a.application_end != b.application_end:

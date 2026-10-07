@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from worker.collectors.bizinfo import BizInfoCollector, today_kst
+from worker.collectors.bizinfo import BizInfoCollector
 from worker.config import get_settings
 from worker.dedupe.support_programs import find_duplicates, plan_updates
 from worker.repositories import support_programs
@@ -67,10 +67,13 @@ def collect() -> None:
             "status": "ok" if result.failed == 0 else "partial",
             "duration": (datetime.now(UTC) - started_at).total_seconds(),
             "collected": result.collected,
+            # persisted counts every record persist() accepted, written or skipped as
+            # unchanged; written is what actually went to the database.
             "persisted": result.persisted,
+            "written": result.persisted - collector.unchanged,
+            "unchanged": collector.unchanged,
             "failed": result.failed,
             "complete": collector.complete,
-            "unchanged": collector.unchanged,
         },
     )
     if result.errors:
@@ -90,7 +93,7 @@ def collect() -> None:
 
 
 def dedupe() -> None:
-    kstartup = support_programs.fetch_open_kstartup_titles(today_kst())
+    kstartup = support_programs.fetch_open_kstartup_titles()
     bizinfo, current = support_programs.fetch_open_bizinfo_titles()
     changes = plan_updates(current, find_duplicates(keep=kstartup, hide=bizinfo))
     support_programs.set_duplicate_of(changes)

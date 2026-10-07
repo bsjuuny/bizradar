@@ -1,4 +1,5 @@
 import { formatDday } from "@/lib/format";
+import { enumValue } from "@/lib/search-params";
 
 /** support_programs.source 허용값 - 마이그레이션의 check 제약과 같은 목록. */
 export const SUPPORT_SOURCES = ["kstartup", "bizinfo"] as const;
@@ -14,14 +15,16 @@ export function supportSourceLabel(source: string): string {
 }
 
 export function parseSupportSource(value: string | null | undefined): SupportSource | undefined {
-  return SUPPORT_SOURCES.find((source) => source === value);
+  return enumValue(value ?? "", SUPPORT_SOURCES);
 }
 
 /**
  * 모집 상태 필터. 기본값은 "open" - 마감된 공고가 전체의 대부분이라(2026-10-07: 2,493건 중
  * K-Startup 910건이 마감) 기본으로 보여주면 신청할 수 있는 공고가 묻힌다.
- * - open: 모집 중(recruiting)이고 마감일이 없거나 오늘 이후. 마감일 조건까지 거는 이유는
- *   K-Startup의 모집 여부 플래그가 마감일보다 늦게 바뀌는 경우가 있어서다(16건 실측).
+ * - open: 모집 중(recruiting)이고 마감일이 없거나 오늘 이후 - DB 함수 support_program_is_open
+ *   (supabase/migrations/20261007130000_support_programs_listing.sql)이 유일한 정의다.
+ *   마감일 조건까지 거는 이유는 K-Startup의 모집 여부 플래그가 마감일보다 늦게 바뀌는
+ *   경우가 있어서다(16건 실측).
  * - closing: open 중 마감일이 오늘부터 CLOSING_SOON_DAYS일 안. 날짜 없는 공고는 빠진다.
  * - all: 마감 포함 전부.
  */
@@ -37,7 +40,7 @@ export const SUPPORT_STATUS_LABELS: Record<SupportStatus, string> = {
 };
 
 export function parseSupportStatus(value: string | null | undefined): SupportStatus {
-  return SUPPORT_STATUSES.find((status) => status === value) ?? DEFAULT_SUPPORT_STATUS;
+  return enumValue(value ?? "", SUPPORT_STATUSES) ?? DEFAULT_SUPPORT_STATUS;
 }
 
 /**

@@ -547,3 +547,40 @@ def test_unknown_semicolon_names_are_left_alone():
     item = {"pblancId": "A", "pblancNm": "a &notice; b &copyright; c &amp; d"}
 
     assert _collector().normalize(_raw(item)).title == "a &notice; b &copyright; c & d"
+
+
+def test_normalize_change_changes_the_hash_even_with_the_same_payload(monkeypatch):
+    item = extract_items(_fixture_text())[0]
+    before = _collector().normalize(_raw(item)).content_hash
+
+    # Simulate a rule change in a derived column (here: IT classification).
+    monkeypatch.setattr("worker.collectors.bizinfo.is_it_related", lambda title: True)
+    after = _collector().normalize(_raw(item)).content_hash
+
+    assert before != after
+
+
+def test_state_read_failure_is_tried_once_then_every_row_is_written(monkeypatch):
+    calls = []
+
+    def broken_state():
+        calls.append(1)
+        raise RuntimeError("db down")
+
+    monkeypatch.setattr("worker.repositories.support_programs.fetch_bizinfo_state", broken_state)
+    persisted = []
+    monkeypatch.setattr(
+        "worker.repositories.support_programs.upsert_bizinfo_program", persisted.append
+    )
+    collector = _collector(lambda request: httpx.Response(200, text=_fixture_text()))
+
+    result = collector.run()
+
+    assert calls == [1]
+    assert len(persisted) == 5 and result.failed == 0
+
+
+def test_html_to_text_separates_table_cells_and_br_with_attributes():
+    assert html_to_text("<td>지원대상</td><td>중소기업</td>") == "지원대상 중소기업"
+    assert html_to_text("a<br class='x'>b") == "a\nb"
+    assert html_to_text("<b>지원</b>대상") == "지원대상"

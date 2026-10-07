@@ -43,8 +43,9 @@ import re
 from worker.collectors.base import decode_entities
 
 # Latin keywords need ASCII boundaries so "AI" doesn't match inside "MAIN" or "SAINT";
-# Hangul next to them is fine ("AI훈련확산센터", "SW개발자").
-_LATIN = r"(?<![A-Za-z]){}(?![A-Za-z])"
+# Hangul next to them is fine ("AI훈련확산센터", "SW개발자"). Case-insensitive: titles also
+# write "ai", "SAAS".
+_LATIN = r"(?<![A-Za-z])(?i:{})(?![A-Za-z])"
 
 _IT_PATTERNS = [
     "소프트웨어",
@@ -91,16 +92,16 @@ _IT_PATTERNS = [
     "코딩",
     _LATIN.format("AIoT"),
     _LATIN.format("ETRI"),
-    _LATIN.format("(?i:chatgpt)"),
+    _LATIN.format(r"chat\s*gpt"),
 ]
 _IT = re.compile("|".join(f"(?:{pattern})" for pattern in _IT_PATTERNS))
 
 # Only a trailing parenthetical that names a funding project or facility build-out is
-# dropped ("...사업", "...구축"); a field marker like "(AI 분야)" stays. And one that names
-# an IT-industry program is kept even so - "지역선도기업사업화지원 공고
-# (지역디지털기업성장지원사업)" is for IT companies though the main title says nothing
-# about IT.
-_FUNDING_PROJECT = re.compile(r"사업|구축")
+# dropped ("...사업", "...구축"); a field marker like "(AI 분야)" or "(AI 사업화 분야)"
+# stays - 사업화/사업자 are not project names. And one that names an IT-industry program is
+# kept even so - "지역선도기업사업화지원 공고(지역디지털기업성장지원사업)" is for IT
+# companies though the main title says nothing about IT.
+_FUNDING_PROJECT = re.compile(r"사업(?![화자])|구축")
 _IT_INDUSTRY_PROGRAM = re.compile(
     r"디지털기업|소프트웨어|정보보호|ICT|(?<![A-Za-z])SW(?![A-Za-z])"
     # IT vouchers fund IT vendors: "(AI바우처 지원사업)", "(데이터바우처 지원사업)".
