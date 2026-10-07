@@ -163,7 +163,9 @@ _SHARED_DERIVED = (
 )
 DERIVED_COLUMNS: dict[str, tuple[str, ...]] = {
     "kstartup": (*_SHARED_DERIVED, "supervising_type"),
-    "bizinfo": (*_SHARED_DERIVED, "application_period_text"),
+    # content_hash too: for 기업마당 it covers the derived columns (BizInfoCollector), so
+    # leaving it stale would make the next hourly run re-send every reclassified row.
+    "bizinfo": (*_SHARED_DERIVED, "application_period_text", "content_hash"),
 }
 
 

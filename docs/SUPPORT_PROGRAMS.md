@@ -81,9 +81,12 @@ matched with the rule in "Dedupe" below.
   `category` = 지원분야 대분류; `region` = the title's leading `[지역]` tag, only when every
   part is a known region word (e.g. `[서울ㆍ인천ㆍ경기]` -> `서울·인천·경기`; untagged ->
   null, never guessed as 전국); `application_period_text` = 신청기간 as written.
-- Dates: only real date ranges become `application_start/end`. 65% of postings (942 of
-  1,442) say "예산 소진시까지", "상시 접수", "세부사업별 상이" etc. - those keep null dates
-  and the list shows the text instead of "일정 미정".
+- Dates: only real "start ~ end" date ranges become `application_start/end` (stored as
+  UTC midnight with an explicit offset). Read forms: `2026-10-01`, `2026.10.1.`,
+  `2026. 10. 2.(목) 09:00`, `2026/10/01`, `20261001`; an end date may omit its year.
+  65% of postings (942 of 1,442) say "예산 소진시까지", "상시 접수", "세부사업별 상이" etc.,
+  and an open end ("2026-10-01 ~") has no deadline either - those keep null dates, stay
+  open until 기업마당 delists them, and the list shows the text instead of "일정 미정".
 - `recruiting`: true for everything currently posted unless its end date has passed. After
   a **complete** response the job sets `recruiting=false` on BizInfo rows that are no
   longer listed. Complete means provably whole: `totCnt` present and readable (a number;
@@ -150,39 +153,42 @@ A K-Startup row collected between BizInfo runs is picked up within the hour.
 
 ## Web
 
-`/support` reads the `support_programs_listing` view
-(`supabase/migrations/20261007130000_support_programs_listing.sql`): every row plus its
-`is_open` and, for a paired 기업마당 copy, the original's current state and filter columns
-(`original_open`, `original_end`, `original_title`, `original_organization`,
-`original_category`, `original_it_related`, `original_investment_linked`).
+`/support` gets its rows from one SQL function, `list_support_programs(...)`
+(`supabase/migrations/20261007130000_support_programs_listing.sql`), which filters, hides
+paired copies, orders and pages in one place:
 
-"모집 중" anywhere - this page, "7일 안에 마감", the detail page's 모집상태, the worker's
-pairing - is `is_open`, i.e. the SQL function `support_program_is_open()`: the source says
-recruiting (or doesn't say, and gives a deadline), and there is no deadline or it hasn't
-passed (Asia/Seoul). One definition, so they can't drift.
+1. `filtered`: the page's filters (status, IT, investment, 출처, 지원분야, search term)
+   applied to every row of `support_programs_listing` (= `support_programs` + `is_open`).
+2. `visible`: a 기업마당 copy is dropped only if its original is *in `filtered`* -
+   `not exists (select 1 from filtered o where o.id = f.duplicate_of)`. That is the rule
+   itself, not an approximation: NULL columns on the original, or filters added later,
+   can't make a program vanish (an earlier version re-applied each filter to copied
+   `original_*` columns by hand, and a NULL there hid the copy with no original listed).
+   With a 출처 filter the original and the copy are never both in `filtered`, so nothing
+   is hidden. Evaluated per query - a copy reappears the moment its original closes.
+3. Order: open first; open ones by nearest deadline (no deadline last); closed ones most
+   recently closed first.
+4. Search is `strpos(lower(...))`, not LIKE - `%`, `_`, `*` are just characters.
 
-A copy is hidden exactly when its original is in the same result: the original is open
-and passes every other active filter too - the deadline window, IT, investment, 지원분야
-and the search term are evaluated on the `original_*` columns
-(`copyHidingFilter` in `apps/web/src/lib/support-filters.ts`). With a 출처 filter nothing
-is hidden: original (K-Startup) and copy (기업마당) are never in the same result. A closed
-original never hides its open copy. All of it is evaluated at query time, so a copy
-reappears the moment its original closes or passes its deadline - not at the next hourly
-dedupe. A page number past the end (old link, shorter list) falls back to page 1.
+"모집 중" anywhere - this page, "7일 안에 마감", the deadline column, the detail page's
+모집상태, the worker's pairing - is `is_open`, i.e. `support_program_is_open()`: the source
+says recruiting (or doesn't say, and gives a deadline), and there is no deadline or it
+hasn't passed (Asia/Seoul, `support_program_today_utc()`). One definition, so they can't
+drift. The 7-day window is in the SQL; `CLOSING_SOON_DAYS` in `support-display.ts` is
+only its label.
 
-Each row shows its source under the title. The deadline column wraps (it can hold long
-신청기간 text) and shows "마감" for a closed
-posting (`recruiting=false`), else the D-day, else the 신청기간 text when there is no
-deadline date, else "일정 미정" (`apps/web/src/lib/support-display.ts`). Detail page:
-source-aware labels and "기업마당 원문 보기" link. Search terms are quoted for PostgREST's
-`or=()` (`apps/web/src/lib/postgrest.ts`); `*`, which PostgREST turns into `%` with no
-escape, becomes the single-character wildcard `_`.
+A page number past the end (old link, shorter list) shows the last page, and the pager
+reports the page actually shown. Each row shows its source under the title. The deadline
+column wraps (it can hold long 신청기간 text) and shows "마감" when the posting isn't open,
+else the D-day, else the 신청기간 text when there is no deadline date, else "일정 미정"
+(`apps/web/src/lib/support-display.ts`). Detail page: source-aware labels and "기업마당 원문
+보기" link.
 
 Filters (all plain links / GET params, no client JS - same pattern as `/opportunities`):
 
 | Filter | Param | Meaning |
 | --- | --- | --- |
-| 상태 (default 모집 중) | `status=open\|closing\|all` | open = `is_open`: `recruiting` and (no deadline or deadline >= today, Asia/Seoul) - `support_program_is_open()` in SQL. The date check is there because K-Startup's own 모집 flag lags its deadline (16 rows on 2026-10-07). closing = open with a deadline within 7 days. all = including closed. |
+| 상태 (default 모집 중) | `status=open\|closing\|all` | open = `is_open`: `recruiting` (or unknown with a deadline) and (no deadline or deadline >= today, Asia/Seoul) - `support_program_is_open()` in SQL. The date check is there because K-Startup's own 모집 flag lags its deadline (16 rows on 2026-10-07). closing = open with a deadline within 7 days. all = including closed. |
 | 출처 | `source=kstartup\|bizinfo` | |
 | IT 관련만 | `it=1` | `it_related` (see "IT filter") |
 | 투자연계형만 | `investment=1` | `investment_linked` |

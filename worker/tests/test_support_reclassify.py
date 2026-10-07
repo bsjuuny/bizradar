@@ -1,7 +1,8 @@
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
 
+from worker.collectors.base import RawRecord
 from worker.collectors.bizinfo import BizInfoCollector
 from worker.collectors.kstartup import KStartupCollector
 from worker.config import Settings
@@ -36,18 +37,35 @@ def _kstartup_row(**overrides):
     return row
 
 
-def _bizinfo_row(row_id, payload_title, **stored):
-    """A 기업마당 row whose stored columns match what the current collector derives from
-    its payload, except for the overrides in `stored`."""
-    url = f"https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId={row_id}"
-    payload = {
+def _bizinfo_payload(row_id, title):
+    return {
         "pblancId": row_id,
-        "pblancNm": payload_title,
-        "pblancUrl": url,
+        "pblancNm": title,
+        "pblancUrl": f"https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId={row_id}",
         "jrsdInsttNm": "중소벤처기업부",
         "excInsttNm": "직접수행",
         "reqstBeginEndDe": "예산 소진시까지",
     }
+
+
+def _current_hash(row_id, title):
+    """content_hash the current collector computes for the payload."""
+    collector = BizInfoCollector(settings=Settings(_env_file=None), today=date(2026, 10, 7))
+    raw = RawRecord(
+        source="bizinfo",
+        external_id=row_id,
+        fetched_at=datetime.now(UTC),
+        payload=_bizinfo_payload(row_id, title),
+    )
+    return collector.normalize(raw).content_hash
+
+
+def _bizinfo_row(row_id, payload_title, stale=False, **stored):
+    """A 기업마당 row whose stored columns match what the current collector derives from
+    its payload, except for the overrides in `stored`. A `stale` row was written by an older
+    collector, so its content_hash (which covers the derived columns) is old too."""
+    payload = _bizinfo_payload(row_id, payload_title)
+    url = payload["pblancUrl"]
     row = {
         "id": row_id,
         "external_id": row_id,
@@ -62,6 +80,9 @@ def _bizinfo_row(row_id, payload_title, **stored):
         "it_related": False,
         "source_url": url,
         "application_period_text": "예산 소진시까지",
+        "content_hash": "hash-from-an-older-collector"
+        if stale
+        else _current_hash(row_id, payload_title),
         "raw_payload": payload,
     }
     row.update(stored)
@@ -87,7 +108,10 @@ def repo(monkeypatch):
     fake = FakeRepo(
         kstartup=[_kstartup_row()],
         bizinfo=[
-            _bizinfo_row("bz-1", "2026년 인천 블록체인 바우처 지원사업 수요기업 모집 공고"),
+            # Stored before the IT rule existed: it_related (and so the hash) is stale.
+            _bizinfo_row(
+                "bz-1", "2026년 인천 블록체인 바우처 지원사업 수요기업 모집 공고", stale=True
+            ),
             _bizinfo_row("bz-2", "2026년 소상공인 온라인판로 지원사업 참여기업 모집공고"),
             _bizinfo_row("bz-3", "2026년 데이터 품질인증 지원사업 공고", it_related=True),
             # A closed posting the collector will never re-send: stale investment flag
@@ -96,6 +120,7 @@ def repo(monkeypatch):
             _bizinfo_row(
                 "bz-4",
                 "[경기] 부천시 2026년 스타트업포럼(IR데모데이) 참가기업 모집 공고",
+                stale=True,
                 title="[경기] 부천시  2026년 스타트업포럼(IR데모데이) 참가기업 모집 공고",
                 region="경기",
             ),
@@ -117,14 +142,26 @@ def repo(monkeypatch):
 def test_writes_only_changed_columns_of_changed_rows(repo):
     result = support_reclassify.run()
 
+    bz4_title = "[경기] 부천시 2026년 스타트업포럼(IR데모데이) 참가기업 모집 공고"
     assert repo.updates == [
         ("ks-1", {"category": "기술개발(R&D)", "it_related": True}),
-        ("bz-1", {"it_related": True}),
+        # The hash is rewritten with the columns it covers, so the next hourly BizInfo run
+        # doesn't see a mismatch and re-send the row.
+        (
+            "bz-1",
+            {
+                "it_related": True,
+                "content_hash": _current_hash(
+                    "bz-1", "2026년 인천 블록체인 바우처 지원사업 수요기업 모집 공고"
+                ),
+            },
+        ),
         (
             "bz-4",
             {
-                "title": "[경기] 부천시 2026년 스타트업포럼(IR데모데이) 참가기업 모집 공고",
+                "title": bz4_title,
                 "investment_linked": True,
+                "content_hash": _current_hash("bz-4", bz4_title),
             },
         ),
     ]
@@ -134,6 +171,7 @@ def test_writes_only_changed_columns_of_changed_rows(repo):
         "it_related": 2,
         "title": 1,
         "investment_linked": 1,
+        "content_hash": 2,
     }
 
 

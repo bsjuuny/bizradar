@@ -126,12 +126,13 @@ Implemented (Phase 1):
 - `support_programs_listing` (view, `security_invoker`) - `support_programs` plus
   `is_open` (`support_program_is_open(recruiting, application_end)`: recruiting - or
   unknown with a deadline - and no deadline or one not yet passed, Asia/Seoul, evaluated at
-  query time; the only definition of 모집 중) and, for a paired copy, the original's
-  `original_open`, `original_end`, `original_title`, `original_organization`,
-  `original_category`, `original_it_related`, `original_investment_linked`. Readers that
-  list programs hide a copy only when its original is in the same result - open and
-  passing the same filters (`apps/web/src/lib/support-filters.ts`); never with a source
-  filter. Dates are stored as UTC midnight with an explicit offset. `p.*` is fixed at creation: a migration adding a column to
+  query time; the only definition of 모집 중). Dates are stored as UTC midnight with an
+  explicit offset.
+- `list_support_programs(p_status, p_it_only, p_investment_only, p_source, p_categories,
+  p_term, p_limit, p_offset)` (SQL function, `security invoker`, returns
+  `{total, items}`) - the Support Radar list. Filters every row, then drops a paired copy
+  only when its original is in the same filtered set, orders and pages. Any other reader
+  listing programs should go through it rather than re-implement the copy rule. `p.*` is fixed at creation: a migration adding a column to
   `support_programs` must recreate this view.
 
 Planned (later phases, see `docs/MVP_SCOPE.md`):

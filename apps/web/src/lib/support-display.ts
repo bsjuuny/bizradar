@@ -31,6 +31,7 @@ export function parseSupportSource(value: string | null | undefined): SupportSou
 export const SUPPORT_STATUSES = ["open", "closing", "all"] as const;
 export type SupportStatus = (typeof SUPPORT_STATUSES)[number];
 export const DEFAULT_SUPPORT_STATUS: SupportStatus = "open";
+/** Label only - the window itself is `interval '7 days'` in list_support_programs (SQL). */
 export const CLOSING_SOON_DAYS = 7;
 
 export const SUPPORT_STATUS_LABELS: Record<SupportStatus, string> = {
@@ -84,12 +85,13 @@ export function parseSupportField(value: string | null | undefined): SupportFiel
 export function formatSupportDeadline(
   applicationEnd: string | null | undefined,
   periodText: string | null | undefined,
-  recruiting: boolean | null | undefined,
+  isOpen: boolean,
   now: Date = new Date(),
 ): string {
-  // A closed posting (기업마당 dropped it, or K-Startup says 모집 마감) must not read as
-  // open: "예산 소진시까지" or a future D-N would suggest it still takes applications.
-  if (recruiting === false) return "마감";
+  // is_open (support_program_is_open) decides, the same as the list filter and the
+  // detail page's 모집상태: a posting that isn't open must not read as open - "예산
+  // 소진시까지" or a future D-N would suggest it still takes applications.
+  if (!isOpen) return "마감";
   if (applicationEnd) return formatDday(applicationEnd, now);
   const text = periodText?.trim();
   return text ? text : formatDday(null, now);

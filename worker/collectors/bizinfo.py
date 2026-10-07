@@ -105,7 +105,21 @@ _REGION_WORDS = frozenset(
 )
 _REGION_TAG = re.compile(r"^\s*\[([^\]]+)\]")
 _REGION_SEPARATORS = re.compile(r"\s*[ㆍ·・,/]\s*")
-_PERIOD = re.compile(r"^(\d{4})[.-]?(\d{2})[.-]?(\d{2})\s*~\s*(\d{4})[.-]?(\d{2})[.-]?(\d{2})$")
+# One date of a 신청기간 range: 2026-10-01, 2026.10.1., 2026. 10. 2., 2026/10/01 or
+# 20261001, optionally followed by a weekday "(목)" and a time "18:00". The end date may
+# leave out its year ("2026. 10. 2. ~ 10. 16.") - it then takes the start's year.
+_DATE_SUFFIX = r"(?:\s*\([월화수목금토일]\))?(?:\s*\d{1,2}:\d{2})?"
+_START_DATE = (
+    r"(?:(?P<y1>\d{4})[.\-/]\s*(?P<m1>\d{1,2})[.\-/]\s*(?P<d1>\d{1,2})\.?"
+    r"|(?P<y1c>\d{4})(?P<m1c>\d{2})(?P<d1c>\d{2}))"
+)
+_END_DATE = (
+    r"(?:(?:(?P<y2>\d{4})[.\-/]\s*)?(?P<m2>\d{1,2})[.\-/]\s*(?P<d2>\d{1,2})\.?"
+    r"|(?P<y2c>\d{4})(?P<m2c>\d{2})(?P<d2c>\d{2}))"
+)
+_PERIOD = re.compile(
+    rf"^\s*{_START_DATE}{_DATE_SUFFIX}\s*~\s*{_END_DATE}{_DATE_SUFFIX}\s*(?:까지)?\s*$"
+)
 # Line breaks: <br> (any attributes) and the end of block elements. Table cells end with
 # a space so "<td>지원대상</td><td>중소기업</td>" doesn't read "지원대상중소기업". Other
 # (inline) tags vanish without a gap - "<b>지원</b>대상" is one word.
@@ -174,12 +188,20 @@ def html_to_text(value: str) -> str:
 
 
 def parse_period(raw: str) -> tuple[date, date] | None:
-    """Only "YYYY-MM-DD ~ YYYY-MM-DD" (or YYYYMMDD / YYYY.MM.DD) reads as dates. Phrases
-    like "예산 소진시까지" or "상시 접수" stay text - never guessed into a date."""
-    match = _PERIOD.match(raw.strip())
+    """A "start ~ end" range of two dates (see _PERIOD for the forms read; times and
+    weekdays are ignored, the date is what counts). Phrases like "예산 소진시까지" or "상시
+    접수", and an open end ("2026-10-01 ~"), stay text - never guessed into a date. A
+    posting whose period stays text is kept open until 기업마당 delists it."""
+    match = _PERIOD.match(raw)
     if not match:
         return None
-    y1, m1, d1, y2, m2, d2 = (int(part) for part in match.groups())
+    parts = match.groupdict()
+    y1 = int(parts["y1"] or parts["y1c"])
+    m1 = int(parts["m1"] or parts["m1c"])
+    d1 = int(parts["d1"] or parts["d1c"])
+    y2 = int(parts["y2"] or parts["y2c"] or y1)
+    m2 = int(parts["m2"] or parts["m2c"])
+    d2 = int(parts["d2"] or parts["d2c"])
     try:
         start, end = date(y1, m1, d1), date(y2, m2, d2)
     except ValueError:

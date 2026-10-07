@@ -43,10 +43,10 @@ describe("formatSupportDeadline", () => {
 
   it("falls back to 일정 미정 when there is neither", () => {
     expect(formatSupportDeadline(null, null, true, NOW)).toBe("일정 미정");
-    expect(formatSupportDeadline(null, "  ", null, NOW)).toBe("일정 미정");
+    expect(formatSupportDeadline(null, "  ", true, NOW)).toBe("일정 미정");
   });
 
-  it("says 마감 for a closed posting even with an open-ended phrase or a future date", () => {
+  it("says 마감 for any posting that isn't open, whatever its date or phrase", () => {
     expect(formatSupportDeadline(null, "예산 소진시까지", false, NOW)).toBe("마감");
     expect(formatSupportDeadline("2026-10-20T00:00:00+00:00", null, false, NOW)).toBe("마감");
   });

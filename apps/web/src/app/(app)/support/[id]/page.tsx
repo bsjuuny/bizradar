@@ -34,7 +34,7 @@ export default async function SupportProgramDetailPage({
             {formatSupportDeadline(
               program.application_end,
               program.application_period_text,
-              program.recruiting,
+              program.is_open,
             )}
           </span>
           <span className="text-xs text-muted-foreground">

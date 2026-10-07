@@ -108,6 +108,15 @@ def test_extract_items_unknown_schema_raises():
         ("", None),
         ("2026-02-30 ~ 2026-03-10", None),  # not a real date
         ("2026-10-31 ~ 2026-09-01", None),  # end before start
+        # Times, weekdays, single-digit parts, an end date without its year.
+        ("2026-10-01 10:00 ~ 2026-10-10 18:00", (date(2026, 10, 1), date(2026, 10, 10))),
+        ("2026.10.1 ~ 2026.10.10", (date(2026, 10, 1), date(2026, 10, 10))),
+        (
+            "2026. 10. 2.(목) 09:00 ~ 10. 16.(목) 18:00 까지",
+            (date(2026, 10, 2), date(2026, 10, 16)),
+        ),
+        ("2026/10/01 ~ 2026/10/31", (date(2026, 10, 1), date(2026, 10, 31))),
+        ("2026-10-01 ~", None),  # open end: no deadline to read
     ],
 )
 def test_parse_period_reads_only_real_date_ranges(raw, expected):

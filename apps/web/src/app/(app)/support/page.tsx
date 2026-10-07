@@ -101,11 +101,13 @@ export default async function SupportPage({
   const investmentOnly = one(params.investment) === "1";
   const source = parseSupportSource(one(params.source));
   const field = parseSupportField(one(params.field))?.key;
-  const page = Math.max(1, parseInt(one(params.page), 10) || 1);
+  const requestedPage = Math.max(1, parseInt(one(params.page), 10) || 1);
   const requestedPageSize = parseInt(one(params.pageSize), 10) || undefined;
 
-  const { items, total, pageSize } = await getSupportPrograms({
-    page,
+  // `page` is the page actually shown - a page number past the end falls back to the last
+  // one, and the pager must follow what was rendered, not what was asked for.
+  const { items, total, page, pageSize } = await getSupportPrograms({
+    page: requestedPage,
     q,
     status,
     itOnly,
@@ -314,7 +316,7 @@ export default async function SupportPage({
                       {formatSupportDeadline(
                         item.application_end,
                         item.application_period_text,
-                        item.recruiting,
+                        item.is_open,
                       )}
                     </td>
                   </tr>
