@@ -31,7 +31,7 @@ export function parseSupportSource(value: string | null | undefined): SupportSou
 export const SUPPORT_STATUSES = ["open", "closing", "all"] as const;
 export type SupportStatus = (typeof SUPPORT_STATUSES)[number];
 export const DEFAULT_SUPPORT_STATUS: SupportStatus = "open";
-/** Label only - the window itself is `interval '7 days'` in list_support_programs (SQL). */
+/** The "곧 마감" window - label and the p_closing_days passed to list_support_programs. */
 export const CLOSING_SOON_DAYS = 7;
 
 export const SUPPORT_STATUS_LABELS: Record<SupportStatus, string> = {

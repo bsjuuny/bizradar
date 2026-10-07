@@ -123,17 +123,18 @@ Implemented (Phase 1):
   `docs/DATA_PIPELINE.md#support-programs-k-startup-implemented-2026-08-10`. RLS: any
   authenticated user can `select`; only `service_role` writes - same pattern as
   `opportunities`.
-- `support_programs_listing` (view, `security_invoker`) - `support_programs` plus
-  `is_open` (`support_program_is_open(recruiting, application_end)`: recruiting - or
-  unknown with a deadline - and no deadline or one not yet passed, Asia/Seoul, evaluated at
-  query time; the only definition of 모집 중). Dates are stored as UTC midnight with an
-  explicit offset.
+- `is_open(support_programs)` - a PostgREST computed column (`select=...,is_open`,
+  `is_open=eq.true`) wrapping `support_program_is_open(recruiting, application_end)`:
+  recruiting - or unknown with a deadline - and no deadline or one not yet passed,
+  Asia/Seoul, evaluated at query time; the only definition of 모집 중. (A computed column
+  rather than a `p.*` view, whose column list would freeze at creation.) Dates are stored
+  as UTC midnight with an explicit offset.
 - `list_support_programs(p_status, p_it_only, p_investment_only, p_source, p_categories,
-  p_term, p_limit, p_offset)` (SQL function, `security invoker`, returns
+  p_term, p_closing_days, p_limit, p_offset)` (PL/pgSQL, `security invoker`, returns
   `{total, items}`) - the Support Radar list. Filters every row, then drops a paired copy
-  only when its original is in the same filtered set, orders and pages. Any other reader
-  listing programs should go through it rather than re-implement the copy rule. `p.*` is fixed at creation: a migration adding a column to
-  `support_programs` must recreate this view.
+  only when its original is in the same filtered set, orders and pages; rejects unknown
+  statuses and out-of-range paging. Any other reader listing programs should go through
+  it rather than re-implement the copy rule.
 
 Planned (later phases, see `docs/MVP_SCOPE.md`):
 

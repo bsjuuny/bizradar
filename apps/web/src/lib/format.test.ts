@@ -13,10 +13,6 @@ describe("seoulDateKey", () => {
     expect(seoulDateKey(new Date("2026-10-07T23:30:00Z"))).toBe("2026-10-08");
     expect(seoulDateKey(new Date("2026-10-07T03:00:00Z"))).toBe("2026-10-07");
   });
-
-  it("shifts by whole days across month ends", () => {
-    expect(seoulDateKey(new Date("2026-10-28T03:00:00Z"), 7)).toBe("2026-11-04");
-  });
 });
 
 describe("formatCurrencyKRW", () => {

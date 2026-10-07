@@ -67,9 +67,9 @@ _REGION_EXPANSION = {
     "충청권": {"대전", "세종", "충북", "충남"},
     "호남권": {"광주", "전남", "전북", "전남광주"},
     "영남권": {"부산", "대구", "울산", "경북", "경남"},
+    # Only the merged label expands. 광주 and 전남 stay themselves: mapping both onto
+    # 전남광주 too would make every 광주/전남 pair "overlap" and the guard useless there.
     "전남광주": {"전남광주", "전남", "광주"},
-    "광주": {"광주", "전남광주"},
-    "전남": {"전남", "전남광주"},
 }
 _SPECIFIC_REGIONS = frozenset(
     {"서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기", "강원"}

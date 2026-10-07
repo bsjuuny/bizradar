@@ -199,11 +199,16 @@ def parse_period(raw: str) -> tuple[date, date] | None:
     y1 = int(parts["y1"] or parts["y1c"])
     m1 = int(parts["m1"] or parts["m1c"])
     d1 = int(parts["d1"] or parts["d1c"])
+    end_year_given = bool(parts["y2"] or parts["y2c"])
     y2 = int(parts["y2"] or parts["y2c"] or y1)
     m2 = int(parts["m2"] or parts["m2c"])
     d2 = int(parts["d2"] or parts["d2c"])
     try:
         start, end = date(y1, m1, d1), date(y2, m2, d2)
+        if not end_year_given and end < start:
+            # "2025. 12. 15. ~ 1. 15." - an end without a year that falls before the start
+            # is in the next year.
+            end = date(y1 + 1, m2, d2)
     except ValueError:
         return None
     if end < start:

@@ -9,15 +9,12 @@ from datetime import datetime
 from typing import Any, cast
 
 from worker.repositories.opportunities import get_service_client
+from worker.repositories.paging import chunked as _chunked
 
 # .in_() puts every id into the request's query string - see
 # worker/repositories/match_scores.py's chunking comment for why a large id list can
 # blow the URL length limit. Same mitigation here.
 _IN_CLAUSE_CHUNK_SIZE = 150
-
-
-def _chunked(items: list[str], size: int) -> list[list[str]]:
-    return [items[i : i + size] for i in range(0, len(items), size)]
 
 
 def get_companies_with_telegram() -> list[dict[str, Any]]:

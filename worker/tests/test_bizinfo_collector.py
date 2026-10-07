@@ -117,6 +117,8 @@ def test_extract_items_unknown_schema_raises():
         ),
         ("2026/10/01 ~ 2026/10/31", (date(2026, 10, 1), date(2026, 10, 31))),
         ("2026-10-01 ~", None),  # open end: no deadline to read
+        # An end without a year that falls before the start is in the next year.
+        ("2025. 12. 15. ~ 1. 15.", (date(2025, 12, 15), date(2026, 1, 15))),
     ],
 )
 def test_parse_period_reads_only_real_date_ranges(raw, expected):

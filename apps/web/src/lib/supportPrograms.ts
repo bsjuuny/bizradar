@@ -3,6 +3,7 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/dal";
 import {
+  CLOSING_SOON_DAYS,
   type SupportFieldKey,
   type SupportSource,
   type SupportStatus,
@@ -87,6 +88,7 @@ export async function getSupportPrograms(
       p_source: options.source ?? null,
       p_categories: parseSupportField(options.field)?.categories ?? null,
       p_term: options.q?.trim() || null,
+      p_closing_days: CLOSING_SOON_DAYS,
       p_limit: pageSize,
       p_offset: (page - 1) * pageSize,
     });
@@ -112,7 +114,8 @@ export async function getSupportProgram(id: string): Promise<SupportProgramDetai
   const supabase = await createClient();
 
   const { data, error } = await supabase
-    .from("support_programs_listing")
+    // is_open is a PostgREST computed column (is_open(support_programs) in the migration).
+    .from("support_programs")
     .select(
       "id, source, title, organization, supervising_type, category, region, recruiting, is_open, investment_linked, it_related, application_end, application_period_text, department, target, application_start, description, source_url",
     )

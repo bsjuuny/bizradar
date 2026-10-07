@@ -138,9 +138,8 @@ when collection was skipped (no key) or failed. It pairs recruiting 기업마당
 K-Startup rows, and diffs against the marks of every 기업마당 row that is recruiting *or*
 still carries a mark - so a closed copy's mark (set while it was open, or by an older
 rule) is cleared rather than kept forever. It writes only rows whose mark changes.
-"Open" K-Startup rows are read from
-`support_programs_listing.is_open` - the single SQL definition of 모집 중
-(`support_program_is_open()`), which the web filters on too.
+"Open" K-Startup rows are read through the `is_open` computed column - the single SQL
+definition of 모집 중 (`support_program_is_open()`), which the web filters on too.
 A K-Startup row collected between BizInfo runs is picked up within the hour.
 
 ## Schema - `supabase/migrations/20261007100000_bizinfo_support_programs.sql`
@@ -158,7 +157,10 @@ A K-Startup row collected between BizInfo runs is picked up within the hour.
 paired copies, orders and pages in one place:
 
 1. `filtered`: the page's filters (status, IT, investment, 출처, 지원분야, search term)
-   applied to every row of `support_programs_listing` (= `support_programs` + `is_open`).
+   applied to every row of `support_programs`, projecting only the listed columns (not
+   `raw_payload`/`description`). Bad arguments (an unknown status, a page size outside
+   1-100, a negative offset or window) raise an error rather than quietly returning
+   something else - any signed-in user can call the RPC directly.
 2. `visible`: a 기업마당 copy is dropped only if its original is *in `filtered`* -
    `not exists (select 1 from filtered o where o.id = f.duplicate_of)`. That is the rule
    itself, not an approximation: NULL columns on the original, or filters added later,

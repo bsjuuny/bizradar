@@ -108,12 +108,12 @@ def _program_title(row: Mapping[str, Any]) -> ProgramTitle:
 
 
 def fetch_open_kstartup_titles() -> list[ProgramTitle]:
-    """K-Startup rows that are open right now - support_programs_listing.is_open, the one
-    definition of "모집 중" that the web's default view filters on too
+    """K-Startup rows that are open right now - the is_open computed column, the one
+    definition of "모집 중" that the web filters on too
     (supabase/migrations/20261007130000_support_programs_listing.sql). A 기업마당 copy is
-    paired only with an original that this view would actually show."""
+    paired only with an original the default 모집 중 view would actually show."""
     rows = _read_all(
-        "support_programs_listing",
+        "support_programs",
         "id, title, application_end, region",
         lambda query: query.eq("source", "kstartup").eq("is_open", True),
     )
@@ -146,10 +146,13 @@ def set_duplicate_of(changes: Mapping[str, str | None]) -> None:
 
 # Per source, the columns its collector's normalize() derives from the raw payload, i.e.
 # the ones a rule or text-handling change can make stale (worker/jobs/support_reclassify.py).
-# Never recruiting or the dates: those depend on when the row was collected and, for
-# 기업마당, on the unlisted-closing pass - re-deriving them from an old payload would undo
-# that.
+# The dates are pure functions of the payload, so they are included (a parse_period fix
+# must reach stored rows - and 기업마당's content_hash covers them). Never recruiting: it
+# depends on when the row was collected and, for 기업마당, on the unlisted-closing pass -
+# re-deriving it from an old payload would undo that.
 _SHARED_DERIVED = (
+    "application_start",
+    "application_end",
     "title",
     "organization",
     "department",

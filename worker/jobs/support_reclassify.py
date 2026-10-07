@@ -52,8 +52,21 @@ def row_changes(
             payload=row["raw_payload"],
         )
     )
-    wanted = {column: getattr(normalized, column) for column in columns}
-    return {column: value for column, value in wanted.items() if row.get(column) != value}
+    changes: dict[str, Any] = {}
+    for column in columns:
+        wanted = getattr(normalized, column)
+        if not _same_value(row.get(column), wanted):
+            # Dates go to PostgREST as ISO strings (with their +00:00 offset).
+            changes[column] = wanted.isoformat() if isinstance(wanted, datetime) else wanted
+    return changes
+
+
+def _same_value(stored: Any, wanted: Any) -> bool:
+    # PostgREST returns timestamptz as a string ("2026-10-16T00:00:00+00:00"); normalize()
+    # gives a datetime. Same instant counts as unchanged.
+    if isinstance(wanted, datetime):
+        return isinstance(stored, str) and datetime.fromisoformat(stored) == wanted
+    return bool(stored == wanted)
 
 
 def run(dry_run: bool = False) -> Counter[str]:

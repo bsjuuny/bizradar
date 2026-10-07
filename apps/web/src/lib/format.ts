@@ -33,17 +33,9 @@ const SEOUL_DAY = new Intl.DateTimeFormat("en-CA", {
   day: "2-digit",
 });
 
-/**
- * Asia/Seoul 달력일(+offsetDays)을 "YYYY-MM-DD"로. D-day 계산과 Support Radar의 마감일
- * 필터가 같은 "오늘"을 쓰도록 하나로 둔다 - 둘이 어긋나면 목록 필터와 D-day 표시가 오늘 마감인
- * 공고를 서로 다르게 판단한다.
- */
-export function seoulDateKey(date: Date = new Date(), offsetDays = 0): string {
-  const key = SEOUL_DAY.format(date);
-  if (offsetDays === 0) return key;
-  return new Date(Date.parse(`${key}T00:00:00Z`) + offsetDays * DAY_MS)
-    .toISOString()
-    .slice(0, 10);
+/** The Asia/Seoul calendar day of `date`, as "YYYY-MM-DD". */
+export function seoulDateKey(date: Date = new Date()): string {
+  return SEOUL_DAY.format(date);
 }
 
 /**

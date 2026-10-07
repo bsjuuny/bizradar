@@ -222,3 +222,12 @@ def test_numbers_written_differently_still_compare_equal():
 
 def test_full_width_apostrophe_year_is_unified_too():
     assert _p("＇26년 1차 창업 지원", None).numbers == frozenset({"2026", "1"})
+
+
+def test_gwangju_and_jeonnam_are_different_regions():
+    gwangju = ProgramTitle("bz", "[광주] 2026년 창업보육센터 입주기업 모집 공고", None, "광주")
+    jeonnam = ProgramTitle("ks", "2026년 창업보육센터 입주기업 모집", None, "전남")
+    merged = ProgramTitle("ks2", "2026년 창업보육센터 입주기업 모집", None, "전남광주")
+
+    assert not _same(gwangju, jeonnam)
+    assert _same(gwangju, merged)  # the merged 전남광주 covers 광주

@@ -200,3 +200,42 @@ def test_second_run_is_a_no_op(repo):
 
     assert support_reclassify.run() == {}
     assert repo.updates == []
+
+
+def test_dates_are_re_derived_and_compared_as_instants(monkeypatch):
+    # bz-5: stored before its 신청기간 form was readable - dates NULL. bz-6: dates already
+    # right, stored as PostgREST returns them (strings) - must count as unchanged.
+    payload = _bizinfo_payload("bz-5", "2026년 SW 지원사업 공고")
+    payload["reqstBeginEndDe"] = "2026. 10. 2.(목) 09:00 ~ 10. 16.(목) 18:00"
+    unreadable_before = _bizinfo_row("bz-5", "2026년 SW 지원사업 공고", stale=True)
+    unreadable_before.update(
+        raw_payload=payload,
+        application_period_text=payload["reqstBeginEndDe"],
+        it_related=True,
+        application_start=None,
+        application_end=None,
+    )
+    already_right = _bizinfo_row("bz-6", "2026년 데이터 품질인증 지원사업 공고", it_related=True)
+    fake = FakeRepo(kstartup=[], bizinfo=[unreadable_before, already_right])
+    settings = Settings(_env_file=None)
+    monkeypatch.setattr(support_reclassify, "support_programs", fake)
+    monkeypatch.setattr(
+        support_reclassify, "KStartupCollector", lambda: KStartupCollector(settings=settings)
+    )
+    monkeypatch.setattr(
+        support_reclassify,
+        "BizInfoCollector",
+        lambda: BizInfoCollector(settings=settings, today=date(2026, 10, 7)),
+    )
+
+    support_reclassify.run()
+
+    assert [row_id for row_id, _ in fake.updates] == ["bz-5"]
+    changes = fake.updates[0][1]
+    assert changes["application_start"] == "2026-10-02T00:00:00+00:00"
+    assert changes["application_end"] == "2026-10-16T00:00:00+00:00"
+
+    # Once stored (as PostgREST strings), a second run sees nothing to do.
+    unreadable_before.update(changes)
+    fake.updates.clear()
+    assert support_reclassify.run() == {}
