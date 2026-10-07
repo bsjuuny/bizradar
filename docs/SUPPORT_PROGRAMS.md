@@ -61,9 +61,12 @@ matched with the rule in "Dedupe" below.
   log (and the data.go.kr serviceKey has been landing there all along).
 - Retries (transport errors, 5xx) wait 2 s then 5 s; 4xx is not retried. `content_hash`
   leaves out `inqireCo` (view count) and `totCnt` (list size), which change every fetch.
-- Only changed rows are written: the stored `(content_hash, recruiting)` is read once per
-  run (if that read fails, every row is written) and a posting that matches is skipped -
-  nearly all of the ~1,450 are, every hour. `content_hash` covers the stable payload *and*
+- Only changed rows are written: the job reads the stored `(id, content_hash,
+  recruiting)` once per run - for rows still recruiting or seen in the last 3 days, not the
+  ever-growing closed history - and hands it to the collector (if that read fails, every
+  row is written) and to the closing step. A posting that matches is skipped - nearly all
+  of the ~1,450 are, every hour - and only its `last_seen_at` is refreshed, in chunks of
+  100 (see "`recruiting`" below). `content_hash` covers the stable payload *and*
   every derived column except `recruiting`, so a change to `normalize()` or to a rule
   reaches every listed row on the next run; only closed rows (never re-sent) need
   reclassify. The job logs `written` (actually sent) next to `persisted` (accepted,
@@ -83,7 +86,10 @@ matched with the rule in "Dedupe" below.
   null, never guessed as 전국); `application_period_text` = 신청기간 as written.
 - Dates: only real "start ~ end" date ranges become `application_start/end` (stored as
   UTC midnight with an explicit offset). Read forms: `2026-10-01`, `2026.10.1.`,
-  `2026. 10. 2.(목) 09:00`, `2026/10/01`, `20261001`; an end date may omit its year.
+  `2026. 10. 2.(목) 09:00`, `2026/10/01`, `20261001`; an end date may omit its year
+  (then it takes the start's year, or the next one when it falls before the start - "12.
+  1. ~ 1. 15." - but only for a window of up to 183 days: "10. 20. ~ 10. 2." is a typo,
+  not a year-long window, and stays text).
   65% of postings (942 of 1,442) say "예산 소진시까지", "상시 접수", "세부사업별 상이" etc.,
   and an open end ("2026-10-01 ~") has no deadline either - those keep null dates, stay
   open until 기업마당 delists them, and the list shows the text instead of "일정 미정".
@@ -93,6 +99,13 @@ matched with the rule in "Dedupe" below.
   "1,443" tolerated) and at least that many *distinct* ids received. A missing totCnt, a
   short or empty list, or repeated/missing ids all skip the closing step, so an upstream
   hiccup can't close announcements that are still open.
+- `last_seen_at`: when the posting was last in a response (upserts set it; skipped rows
+  are refreshed by the job), whether or not the response was complete. The closing step
+  can stall - an expired key, or responses that keep coming back incomplete - and for the
+  65% of postings without a deadline date, leaving the list is the only way they close.
+  So `is_open` stops counting a row as open once it has gone 3 days unseen. Per row: one
+  missing or repeated id in a response affects that posting only. K-Startup rows (and
+  기업마당 rows stored before the column existed) have it null, and the rule skips them.
 - Entity decoding (`decode_entities` in `worker/collectors/base.py`) only expands
   `;`-terminated references; `html.unescape` alone also expands legacy forms without `;`
   and turns a URL's `&notice=1` into `¬ice=1`. Named references must be exact HTML5
@@ -116,11 +129,15 @@ K-Startup wraps names in 「」 or moves "4차" to the end, spacing/punctuation 
 2. the set of numbers in both titles must be equal (separates "2차" from "3차" of a
    recurring program, which otherwise score 0.85+), after unifying "1,000" -> "1000" and
    "'26년" -> "2026년";
-3. regions, when both are specific, must share a 시·도 (권역 words such as 수도권 are
-   expanded; 전국/unknown never block). Generic titles recur in every region - a Seoul
-   incubator's "2026년 창업보육센터 입주기업 모집" and "[대전] ... 모집 공고" score 1.0/1.0.
-   All 17 measured pairs agree on region or have one side 전국/untagged. Organization names
-   are not compared: they differ in 7 of the 17 true pairs;
+3. a specific region on either side must be matched by a specific region on the other
+   that shares a 시·도 (권역 words such as 수도권 are expanded). Generic titles recur in
+   every region - a Seoul incubator's "2026년 창업보육센터 입주기업 모집" and "[대전] ...
+   모집 공고" score 1.0/1.0. 전국 is no match for a specific region: it is K-Startup's
+   default (113 of ~175 open rows, local incubators included). Of the 17 measured pairs, 6
+   name the same region on both sides and 11 have none on either (기업마당 untagged,
+   K-Startup 전국); none pairs a region with 전국, and re-running the rule on the live rows
+   gave the same 17. Organization names are not compared: they differ in 7 of the 17 true
+   pairs;
 4. both have a deadline: same day, bigram overlap coefficient >= 0.8 and Jaccard >= 0.55
    (the same day alone isn't proof - month-end deadlines are common, and a short generic
    title is nearly a subset of a longer unrelated one; weakest true dated pair: 0.62);
@@ -179,13 +196,10 @@ PostgREST computed column): the source says recruiting (or doesn't say, and give
 deadline), and there is no deadline or it hasn't passed (Asia/Seoul,
 `support_program_today_utc()`). One definition, so they can't drift.
 
-One more condition, for 기업마당 rows without a deadline date (65% - "예산 소진시까지"):
-nothing but the job's unlisted-closing pass ever closes them, and that pass runs only on
-a provably complete response. If it stops (expired key, responses that keep coming back
-truncated), those rows would stay 모집 중 forever. So each completed pass is recorded in
-`support_source_sync` (`last_complete_at` per source), and `is_open` counts a date-less
-기업마당 row as open only while that is under 3 days old. Rows with a date keep closing
-on their date regardless.
+One more condition, for rows whose source is a list of what is posted right now
+(기업마당): `last_seen_at` must be under 3 days old (see "`last_seen_at`" above) -
+otherwise a posting without a deadline date would stay 모집 중 forever whenever the
+closing step stalls.
 
 The 7-day "곧 마감" window: `CLOSING_SOON_DAYS` in `support-display.ts` is passed to the
 function as `p_closing_days` and also labels the chip, so the label and the filter come
@@ -203,7 +217,7 @@ Filters (all plain links / GET params, no client JS - same pattern as `/opportun
 
 | Filter | Param | Meaning |
 | --- | --- | --- |
-| 상태 (default 모집 중) | `status=open\|closing\|all` | open = `is_open`: `recruiting` (or unknown with a deadline) and (no deadline or deadline >= today, Asia/Seoul), and for date-less 기업마당 rows a closing pass within 3 days (see above). The date check is there because K-Startup's own 모집 flag lags its deadline (16 rows on 2026-10-07). closing = open with a deadline within `CLOSING_SOON_DAYS` (7). all = including closed. |
+| 상태 (default 모집 중) | `status=open\|closing\|all` | open = `is_open`: `recruiting` (or unknown with a deadline) and (no deadline or deadline >= today, Asia/Seoul), and for 기업마당 rows seen in the list within 3 days (see above). The date check is there because K-Startup's own 모집 flag lags its deadline (16 rows on 2026-10-07). closing = open with a deadline within `CLOSING_SOON_DAYS` (7). all = including closed. |
 | 출처 | `source=kstartup\|bizinfo` | |
 | IT 관련만 | `it=1` | `it_related` (see "IT filter") |
 | 투자연계형만 | `investment=1` | `investment_linked` |
@@ -278,11 +292,12 @@ Steps 1-4 were done 2026-10-07. The changes after it (filters, review fixes) add
 migrations - `20261007120000_support_programs_it_related.sql` and
 `20261007130000_support_programs_listing.sql` - and roll out the same way:
 
-1. `npx supabase db push` (both; the second creates `is_open()`, `list_support_programs()`
-   and `support_source_sync`) - before the web deploy (it calls the function and reads
-   `is_open` and `it_related`) **and** before any worker restart (the collectors now write
-   `it_related`, against the old schema every upsert fails; the job reads `is_open` and
-   writes `support_source_sync`).
+1. `npx supabase db push` (both; the second adds `last_seen_at` and creates `is_open()`
+   and `list_support_programs()`) - before the web deploy (it calls the function and reads
+   `is_open` and `it_related`) **and** before any worker restart: the worker runs from
+   this checkout, and against the old schema every K-Startup and 기업마당 upsert fails
+   (`it_related`, `last_seen_at`) and the dedupe read fails (`is_open`). Both migrations
+   are additive, so applying them under the currently running worker and web is safe.
 2. `python -m worker.jobs.support_reclassify --dry-run`, then without `--dry-run` - fills
    `it_related` and re-normalizes stored text (K-Startup entities, whitespace); until then
    "IT 관련만" shows nothing.

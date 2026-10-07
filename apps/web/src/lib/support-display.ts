@@ -24,8 +24,8 @@ export function parseSupportSource(value: string | null | undefined): SupportSou
  * - open: 모집 중(recruiting)이고 마감일이 없거나 오늘 이후 - DB 함수 is_open(support_programs)
  *   (supabase/migrations/20261007130000_support_programs_listing.sql)이 유일한 정의다.
  *   마감일 조건까지 거는 이유는 K-Startup의 모집 여부 플래그가 마감일보다 늦게 바뀌는
- *   경우가 있어서다(16건 실측). 날짜 없는 기업마당 공고는 목록 마감 처리가 3일 안에 돌았을
- *   때만 모집 중이다 - 그 처리 말고는 그런 공고를 마감할 방법이 없다.
+ *   경우가 있어서다(16건 실측). 기업마당 공고는 3일 넘게 목록에서 보이지 않으면 마감이다 -
+ *   날짜 없는 공고는 목록에서 내려가는 것 말고는 마감될 길이 없다.
  * - closing: open 중 마감일이 오늘부터 CLOSING_SOON_DAYS일 안. 날짜 없는 공고는 빠진다.
  * - all: 마감 포함 전부.
  */

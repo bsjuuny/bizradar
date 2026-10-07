@@ -3,13 +3,16 @@ BIZINFO_API_KEY is configured. A failure here must not take down the scheduler o
 jobs (docs/DATA_PIPELINE.md#failure-isolation) - existing support_programs rows are left
 untouched on failure, since collection only ever upserts.
 
+After a successful collection every listed row has a fresh last_seen_at - upserted rows
+set it, the ones skipped as unchanged are marked here. is_open() in SQL stops counting a
+기업마당 row as 모집 중 once it has gone 3 days unseen: for the 65% of postings whose
+신청기간 is a phrase ("예산 소진시까지"), leaving the list is the only way they close, and
+pass 1 below can stall (expired key, responses that keep coming back incomplete).
+
 Two follow-up passes, each isolated from the other:
 1. close (after a successful collection only): announcements that dropped off 기업마당's
    list are marked recruiting=false - only when the response was provably the complete
-   list (BizInfoCollector.complete). Each such run is recorded in support_source_sync:
-   is_open() in SQL stops counting date-less 기업마당 rows as 모집 중 once this pass
-   hasn't run for 3 days (expired key, persistently truncated responses), since nothing
-   else would ever close them.
+   list (BizInfoCollector.complete).
 2. dedupe (every run with Supabase configured, even when collection was skipped or failed
    - K-Startup rows keep opening and closing, and a stale duplicate_of would pair a
    기업마당 copy with a K-Startup original that has left the 모집 중 view): 기업마당 rows
@@ -25,7 +28,7 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from worker.collectors.bizinfo import BizInfoCollector
+from worker.collectors.bizinfo import BizInfoCollector, StoredRow
 from worker.config import get_settings
 from worker.dedupe.support_programs import find_duplicates, plan_updates
 from worker.repositories import support_programs
@@ -59,8 +62,20 @@ def collect() -> None:
         return
 
     started_at = datetime.now(UTC)
+    stored: dict[str, StoredRow] | None
     try:
-        with BizInfoCollector() as collector:
+        stored = support_programs.fetch_bizinfo_state()
+    except Exception:
+        # Read once per run: without it every row is written, and the closing pass
+        # reads for itself.
+        logger.warning(
+            "bizinfo: could not read stored state - writing every row this run",
+            extra={"job": JOB},
+            exc_info=True,
+        )
+        stored = None
+    try:
+        with BizInfoCollector(stored=stored) as collector:
             result = collector.run()
     except Exception:
         logger.exception(
@@ -69,6 +84,7 @@ def collect() -> None:
         )
         return
 
+    unchanged = len(collector.unchanged_ids)
     logger.info(
         "bizinfo job finished",
         extra={
@@ -80,8 +96,8 @@ def collect() -> None:
             # persisted counts every record persist() accepted, written or skipped as
             # unchanged; written is what actually went to the database.
             "persisted": result.persisted,
-            "written": result.persisted - collector.unchanged,
-            "unchanged": collector.unchanged,
+            "written": result.persisted - unchanged,
+            "unchanged": unchanged,
             "failed": result.failed,
             "complete": collector.complete,
         },
@@ -92,12 +108,14 @@ def collect() -> None:
             extra={"job": JOB, "source": "bizinfo", "errors": result.errors[:10]},
         )
 
+    try:
+        support_programs.mark_bizinfo_seen(collector.unchanged_ids)
+    except Exception:
+        logger.exception("bizinfo: recording listed rows as seen failed", extra={"job": JOB})
+
     if collector.complete:
         try:
-            closed = support_programs.close_unlisted_bizinfo(
-                collector.listed_ids, collector.stored_recruiting
-            )
-            support_programs.mark_source_sync_complete("bizinfo")
+            closed = support_programs.close_unlisted_bizinfo(collector.listed_ids, stored)
             logger.info(
                 "bizinfo: closed unlisted announcements", extra={"job": JOB, "closed": closed}
             )

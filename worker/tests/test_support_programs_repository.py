@@ -3,6 +3,7 @@ from typing import Any
 
 import pytest
 
+from worker.collectors.bizinfo import BizInfoNormalizedProgram, StoredRow
 from worker.repositories import support_programs
 
 
@@ -55,10 +56,17 @@ def test_close_unlisted_uses_the_given_state_without_reading(client, monkeypatch
     def must_not_read():
         raise AssertionError("state was given - no second read")
 
-    monkeypatch.setattr(support_programs, "fetch_recruiting_bizinfo", must_not_read)
+    monkeypatch.setattr(support_programs, "fetch_bizinfo_state", must_not_read)
 
     closed = support_programs.close_unlisted_bizinfo(
-        {"A"}, {"A": ("row-a", "h"), "B": ("row-b", "h"), "C": ("row-c", "h")}
+        {"A"},
+        {
+            "A": StoredRow("row-a", "h", True),
+            "B": StoredRow("row-b", "h", True),
+            "C": StoredRow("row-c", "h", True),
+            # Recently seen but already closed: nothing to do.
+            "D": StoredRow("row-d", "h", False),
+        },
     )
 
     assert closed == 2
@@ -68,21 +76,33 @@ def test_close_unlisted_uses_the_given_state_without_reading(client, monkeypatch
 
 
 def test_close_unlisted_reads_the_state_when_not_given(client, monkeypatch):
-    # The collector's own read failed: fall back to reading it here.
-    monkeypatch.setattr(support_programs, "fetch_recruiting_bizinfo", lambda: {"B": ("row-b", "h")})
+    # The job's own read failed: fall back to reading it here.
+    monkeypatch.setattr(
+        support_programs, "fetch_bizinfo_state", lambda: {"B": StoredRow("row-b", "h", True)}
+    )
 
     assert support_programs.close_unlisted_bizinfo({"A"}) == 1
     assert client.requests[0]["in"] == ("id", ["row-b"])
 
 
-def test_source_sync_is_upserted_per_source(client):
-    support_programs.mark_source_sync_complete("bizinfo")
+def test_seen_rows_get_a_fresh_last_seen_at(client):
+    support_programs.mark_bizinfo_seen(["row-a", "row-b"])
 
     (request,) = client.requests
-    assert request["table"] == "support_source_sync"
-    assert request["on_conflict"] == "source"
-    assert request["values"]["source"] == "bizinfo"
-    assert datetime.fromisoformat(request["values"]["last_complete_at"]).tzinfo is not None
+    assert request["in"] == ("id", ["row-a", "row-b"])
+    assert datetime.fromisoformat(request["values"]["last_seen_at"]).tzinfo is not None
+
+
+def test_bizinfo_upsert_records_the_row_as_seen(client):
+    normalized = BizInfoNormalizedProgram(
+        external_id="PBLN_1", title="t", content_hash="h", raw_payload={}
+    )
+
+    support_programs.upsert_bizinfo_program(normalized)
+
+    (request,) = client.requests
+    assert request["op"] == "upsert"
+    assert request["values"]["last_seen_at"]
 
 
 def test_bulk_updates_are_chunked(client):

@@ -16,9 +16,11 @@ Each row's own collector re-runs normalize() on the stored raw_payload, so the c
 DERIVED_COLUMNS come out exactly as a fresh collection would write them - including the
 application dates, which are pure functions of the payload (a parse_period fix must reach
 stored rows). Only changed columns of changed rows are written; rows needing the same
-change go in one request per chunk. Recruiting state and duplicate_of are never touched:
-they depend on when a row was collected and on the closing/dedupe passes, not on the
-payload.
+change go in one request per chunk - which batches K-Startup rows, while each changed
+기업마당 row is its own request (its content_hash is part of the change). A row whose
+payload can't be re-derived is logged and left as is. Recruiting state, duplicate_of and
+last_seen_at are never touched: they depend on when a row was collected and on the
+closing/dedupe passes, not on the payload.
 """
 
 from __future__ import annotations
@@ -74,7 +76,8 @@ def _same_value(stored: Any, wanted: Any) -> bool:
 
 
 def run(dry_run: bool = False) -> Counter[str]:
-    """Returns how many rows changed per column ("rows" = rows touched)."""
+    """Returns how many rows changed per column ("rows" = rows touched, "failed" = rows
+    whose payload couldn't be re-derived and were left as they are)."""
     collectors: dict[str, _Normalizer] = {
         "kstartup": KStartupCollector(),
         "bizinfo": BizInfoCollector(),
@@ -88,7 +91,17 @@ def run(dry_run: bool = False) -> Counter[str]:
         columns = support_programs.DERIVED_COLUMNS[source]
         for row in support_programs.fetch_programs_for_reclassify(source):
             scanned += 1
-            changes = row_changes(row, source, collector, columns)
+            try:
+                changes = row_changes(row, source, collector, columns)
+            except Exception:
+                # One unreadable stored payload must not cost every other row its update
+                # (after a migration this run is what fills it_related).
+                logger.exception(
+                    "support_reclassify: could not re-derive a row, skipped",
+                    extra={"source": source, "id": row["id"]},
+                )
+                changed["failed"] += 1
+                continue
             if not changes:
                 continue
             changed["rows"] += 1

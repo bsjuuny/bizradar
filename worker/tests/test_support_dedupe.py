@@ -208,8 +208,25 @@ def test_generic_title_in_different_regions_is_not_the_same_program():
     )
 
     assert not _same(daejeon, seoul)
-    assert _same(daejeon, nationwide)  # 전국 says nothing specific
+    # 전국 is K-Startup's default, also on local incubators' rows - it can't vouch for 대전.
+    assert not _same(daejeon, nationwide)
+    assert not _same(nationwide, daejeon)
     assert _same(metro, seoul)  # overlapping regions
+
+
+@pytest.mark.parametrize(
+    ("bizinfo_region", "kstartup_region"),
+    # Every combination in the 17 true pairs of 2026-10-07: 11 x (untagged, 전국),
+    # 5 x (서울, 서울), 1 x (경기, 경기).
+    [(None, "전국"), ("서울", "서울"), ("경기", "경기")],
+)
+def test_region_combinations_of_the_measured_true_pairs_still_match(
+    bizinfo_region, kstartup_region
+):
+    bizinfo = ProgramTitle("bz", "2026년 창업보육센터 입주기업 모집 공고", None, bizinfo_region)
+    kstartup = ProgramTitle("ks", "2026년 창업보육센터 입주기업 모집", None, kstartup_region)
+
+    assert _same(bizinfo, kstartup)
 
 
 def test_numbers_written_differently_still_compare_equal():

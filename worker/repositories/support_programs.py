@@ -8,10 +8,10 @@ K-Startup or BizInfo job inserts meanwhile can't make a read skip or repeat a ro
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
-from worker.collectors.bizinfo import BizInfoNormalizedProgram
+from worker.collectors.bizinfo import BizInfoNormalizedProgram, StoredRow
 from worker.collectors.kstartup import KStartupNormalizedProgram
 from worker.dedupe.support_programs import ProgramTitle
 from worker.repositories.opportunities import get_service_client
@@ -61,6 +61,8 @@ def upsert_bizinfo_program(normalized: BizInfoNormalizedProgram) -> None:
     client = get_service_client()
     row = _common_row("bizinfo", normalized)
     row["application_period_text"] = normalized.application_period_text
+    # Only ever written for a posting that is in the response being persisted.
+    row["last_seen_at"] = datetime.now(UTC).isoformat()
     client.table("support_programs").upsert(row, on_conflict="source,external_id").execute()
 
 
@@ -70,49 +72,59 @@ def _read_all(table: str, columns: str, narrow: Callable[[Any], Any]) -> list[di
     return fetch_all_pages(lambda: narrow(client.table(table).select(columns)), key="id")
 
 
-def fetch_recruiting_bizinfo() -> dict[str, tuple[str, str]]:
-    """external_id -> (id, content_hash) for every 기업마당 row stored as recruiting.
+# How long a 기업마당 row may be missing from the list and still count as open - must match
+# the interval in is_open() (supabase/migrations/20261007130000_support_programs_listing.sql).
+LISTING_STALE_AFTER = timedelta(days=3)
 
-    Recruiting rows only: closed postings pile up (~1,500 new listings a month) and a
-    run needs none of them - a listed posting that was closed is written again anyway
-    (it reopens), and only recruiting rows can be closed. So the read stays the size of
-    the open list instead of growing with history."""
+
+def fetch_bizinfo_state() -> dict[str, StoredRow]:
+    """external_id -> StoredRow for the 기업마당 rows a run can touch: the recruiting ones
+    (the only ones the closing pass can close) and any seen in the list within
+    LISTING_STALE_AFTER (so a listed posting past its deadline, stored as closed, is
+    still recognized as unchanged). Not the closed history - ~1,500 new postings a month
+    pile up there, and a closed posting that reappears is simply written again."""
+    since = (datetime.now(UTC) - LISTING_STALE_AFTER).isoformat()
     rows = _read_all(
         "support_programs",
-        "id, external_id, content_hash",
-        lambda query: query.eq("source", "bizinfo").eq("recruiting", True),
+        "id, external_id, content_hash, recruiting",
+        lambda query: query.eq("source", "bizinfo").or_(
+            f'recruiting.is.true,last_seen_at.gte."{since}"'
+        ),
     )
-    return {row["external_id"]: (row["id"], row["content_hash"]) for row in rows}
+    return {
+        row["external_id"]: StoredRow(row["id"], row["content_hash"], row["recruiting"])
+        for row in rows
+    }
+
+
+def mark_bizinfo_seen(row_ids: Sequence[str]) -> None:
+    """Record that these rows were in the list just fetched - the ones the collector
+    skipped as unchanged (upserted rows set last_seen_at themselves). is_open() stops
+    counting a 기업마당 row as open once it has gone LISTING_STALE_AFTER unseen."""
+    update_programs(row_ids, {"last_seen_at": datetime.now(UTC).isoformat()})
 
 
 def close_unlisted_bizinfo(
-    listed_ids: Iterable[str], recruiting: Mapping[str, tuple[str, str]] | None = None
+    listed_ids: Iterable[str], stored: Mapping[str, StoredRow] | None = None
 ) -> int:
     """기업마당 목록에서 내려간 공고를 모집 마감으로 표시한다. Call only with the complete
     current list (BizInfoCollector.complete) - otherwise a truncated response would close
-    announcements that are still open. `recruiting` is fetch_recruiting_bizinfo() as read
-    at the start of the run (the collector already has it); rows that became recruiting
-    since are all listed, so it is still the full set to check. Read here when not given.
+    announcements that are still open. `stored` is fetch_bizinfo_state() as read before
+    the run (the job already has it); rows that became recruiting since are all listed,
+    so its recruiting rows are still the full set to check. Read here when not given.
     Returns how many rows were closed."""
-    if recruiting is None:
-        recruiting = fetch_recruiting_bizinfo()
+    if stored is None:
+        stored = fetch_bizinfo_state()
     listed = set(listed_ids)
-    stale = [row_id for external_id, (row_id, _) in recruiting.items() if external_id not in listed]
+    stale = [
+        row.id
+        for external_id, row in stored.items()
+        if row.recruiting and external_id not in listed
+    ]
     client = get_service_client()
     for chunk in chunked(stale, _UPDATE_CHUNK_SIZE):
         client.table("support_programs").update({"recruiting": False}).in_("id", chunk).execute()
     return len(stale)
-
-
-def mark_source_sync_complete(source: str) -> None:
-    """Record that `source`'s unlisted-closing pass just ran on a complete list. is_open()
-    stops treating that source's date-less rows as open once this is 3 days old
-    (supabase/migrations/20261007130000_support_programs_listing.sql)."""
-    client = get_service_client()
-    client.table("support_source_sync").upsert(
-        {"source": source, "last_complete_at": datetime.now(UTC).isoformat()},
-        on_conflict="source",
-    ).execute()
 
 
 def _to_date(value: str | None) -> date | None:
@@ -175,7 +187,8 @@ def set_duplicate_of(changes: Mapping[str, str | None]) -> None:
 # The dates are pure functions of the payload, so they are included (a parse_period fix
 # must reach stored rows - and 기업마당's content_hash covers them). Never recruiting: it
 # depends on when the row was collected and, for 기업마당, on the unlisted-closing pass -
-# re-deriving it from an old payload would undo that.
+# re-deriving it from an old payload would undo that. Nor last_seen_at: it records when
+# the posting was in a response, not anything in its payload.
 _SHARED_DERIVED = (
     "application_start",
     "application_end",

@@ -29,9 +29,9 @@ import json
 import logging
 import re
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from datetime import UTC, date, datetime
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import quote, quote_plus, urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
@@ -87,6 +87,9 @@ _END_DATE = (
     r"(?:(?:(?P<y2>\d{4})[.\-/]\s*)?(?P<m2>\d{1,2})[.\-/]\s*(?P<d2>\d{1,2})\.?"
     r"|(?P<y2c>\d{4})(?P<m2c>\d{2})(?P<d2c>\d{2}))"
 )
+# A year-less end before the start rolls into the next year only for a window up to this
+# long - a real cross-year 신청기간 is weeks or a few months ("12. 1. ~ 1. 15.").
+_MAX_ROLLED_OVER_DAYS = 183
 _PERIOD = re.compile(
     rf"^\s*{_START_DATE}{_DATE_SUFFIX}\s*~\s*{_END_DATE}{_DATE_SUFFIX}\s*(?:까지)?\s*$"
 )
@@ -96,6 +99,15 @@ _PERIOD = re.compile(
 _LINE_BREAK_TAGS = re.compile(r"<\s*br\b[^>]*>|<\s*/\s*(?:p|div|li|tr|h\d)\s*>", re.IGNORECASE)
 _CELL_END_TAGS = re.compile(r"<\s*/\s*(?:td|th)\s*>", re.IGNORECASE)
 _TAGS = re.compile(r"<[^>]+>")
+
+
+class StoredRow(NamedTuple):
+    """What a run needs to know about a 기업마당 row already in the database
+    (worker/repositories/support_programs.fetch_bizinfo_state)."""
+
+    id: str
+    content_hash: str
+    recruiting: bool | None
 
 
 class BizInfoNormalizedProgram(BaseModel):
@@ -173,15 +185,21 @@ def parse_period(raw: str) -> tuple[date, date] | None:
     y2 = int(parts["y2"] or parts["y2c"] or y1)
     m2 = int(parts["m2"] or parts["m2c"])
     d2 = int(parts["d2"] or parts["d2c"])
+    # "2025. 12. 15. ~ 1. 15." - an end without a year that falls before the start is in
+    # the next year. Decided on (month, day) before building the date, so "12. 1. ~ 2. 29."
+    # reaches the leap year instead of failing on Feb 29 of the start year.
+    rolled_over = not end_year_given and (m2, d2) < (m1, d1)
+    if rolled_over:
+        y2 = y1 + 1
     try:
         start, end = date(y1, m1, d1), date(y2, m2, d2)
-        if not end_year_given and end < start:
-            # "2025. 12. 15. ~ 1. 15." - an end without a year that falls before the start
-            # is in the next year.
-            end = date(y1 + 1, m2, d2)
     except ValueError:
         return None
     if end < start:
+        return None
+    if rolled_over and (end - start).days > _MAX_ROLLED_OVER_DAYS:
+        # "2026. 10. 20. ~ 10. 2." is a typo, not a 347-day window: as a date it would
+        # read D-360 and stay open for a year. Left as text, it closes when delisted.
         return None
     return start, end
 
@@ -255,6 +273,7 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         client: httpx.Client | None = None,
         today: date | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        stored: Mapping[str, StoredRow] | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self._client = client
@@ -266,13 +285,12 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         # listed" as "no longer recruiting".
         self.listed_ids: set[str] = set()
         self.complete = False
-        # external_id -> (id, content_hash) of the rows stored as recruiting, loaded on the
-        # first persist() of a run (None until then, or if that read failed); rows that
-        # match are not re-sent (see persist()), and the job reuses it to close unlisted
-        # rows without reading them again.
-        self.stored_recruiting: dict[str, tuple[str, str]] | None = None
-        self._state_loaded = False
-        self.unchanged = 0
+        # external_id -> StoredRow, read by the job before the run; rows that match are not
+        # re-sent (see persist()). None: unknown, so every row is written.
+        self._stored = stored
+        # Ids of the stored rows persist() skipped as unchanged - still listed, so the job
+        # records them as seen (last_seen_at) without rewriting them.
+        self.unchanged_ids: list[str] = []
 
     def __enter__(self) -> BizInfoCollector:
         return self
@@ -345,9 +363,7 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
     def collect(self) -> Iterable[RawRecord]:
         self.listed_ids = set()
         self.complete = False
-        self.stored_recruiting = None
-        self._state_loaded = False
-        self.unchanged = 0
+        self.unchanged_ids = []
         items = self._fetch()
         total = _total_count(items[0]) if items else None
 
@@ -440,29 +456,20 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         return bool(normalized.title)
 
     def persist(self, normalized: BizInfoNormalizedProgram) -> None:
-        """Skips the upsert when the row is stored as recruiting with the same content_hash
-        and is still recruiting - every open posting is in every hourly response, and nearly
-        all of them are unchanged. That turns ~1,450 single-row requests per run into a
-        handful, and keeps updated_at meaning "changed". content_hash includes the derived
-        columns (see normalize()), so collector/rule changes still reach every listed row;
-        closed rows that are never re-sent need worker/jobs/support_reclassify.py."""
-        from worker.repositories.support_programs import (
-            fetch_recruiting_bizinfo,
-            upsert_bizinfo_program,
-        )
+        """Skips the upsert when the stored row has the same content_hash and recruiting
+        state - every open posting is in every hourly response, and nearly all of them are
+        unchanged. That turns ~1,450 single-row requests per run into a handful, and keeps
+        updated_at meaning "changed". content_hash includes the derived columns (see
+        normalize()), so collector/rule changes still reach every listed row; closed rows
+        that are never re-sent need worker/jobs/support_reclassify.py."""
+        from worker.repositories.support_programs import upsert_bizinfo_program
 
-        if not self._state_loaded:
-            # Read once per run, not once per record: on failure, write every row.
-            self._state_loaded = True
-            try:
-                self.stored_recruiting = fetch_recruiting_bizinfo()
-            except Exception:
-                logger.warning(
-                    "bizinfo: could not read stored state - writing every row this run",
-                    exc_info=True,
-                )
-        stored = (self.stored_recruiting or {}).get(normalized.external_id)
-        if normalized.recruiting and stored is not None and stored[1] == normalized.content_hash:
-            self.unchanged += 1
+        stored = self._stored.get(normalized.external_id) if self._stored is not None else None
+        if (
+            stored is not None
+            and stored.content_hash == normalized.content_hash
+            and stored.recruiting == normalized.recruiting
+        ):
+            self.unchanged_ids.append(stored.id)
             return
         upsert_bizinfo_program(normalized)

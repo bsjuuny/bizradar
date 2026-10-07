@@ -26,11 +26,15 @@ as character-bigram sets:
 - when either side has no deadline (65% of 기업마당 postings say "예산 소진시까지"),
   overlap >= 0.9 and Jaccard >= 0.65: the one false pair scored overlap 0.95 but Jaccard
   0.59, the weakest true date-less pair 0.70.
-- regions, when both are specific, must overlap: generic titles recur in every region
-  ("[대전] 2026년 창업보육센터 입주기업 모집 공고" vs a Seoul incubator's "2026년
-  창업보육센터 입주기업 모집" scores 1.0/1.0). All 17 measured pairs agree on region
-  (서울/서울, 경기/경기) or have one side 전국/untagged. Organization names are not used:
-  they differ in 7 of the 17 true pairs (e.g. 수행기관 "창업진흥원" vs K-Startup's
+- a specific region on either side must be matched by an overlapping specific region on
+  the other: generic titles recur in every region ("[대전] 2026년 창업보육센터 입주기업
+  모집 공고" vs a Seoul incubator's "2026년 창업보육센터 입주기업 모집" scores 1.0/1.0).
+  전국 doesn't count as a match - it is K-Startup's default (113 of ~175 open rows on
+  2026-10-07, local incubators included), so it says nothing about where a program is.
+  Measured on the 17 true pairs: 6 name the same region on both sides, the other 11 have
+  no region on either (기업마당 untagged, K-Startup 전국) - none pairs a region with 전국,
+  so the rule keeps all 17. Two regionless titles still pair. Organization names are not
+  used: they differ in 7 of the 17 true pairs (e.g. 수행기관 "창업진흥원" vs K-Startup's
   "중소벤처기업부 장관").
 """
 
@@ -108,7 +112,7 @@ def match_score(a: ProgramTitle, b: ProgramTitle) -> tuple[float, float] | None:
     """(overlap, Jaccard) when the two rows are the same program, else None."""
     if a.numbers != b.numbers:
         return None
-    if a.regions and b.regions and not (a.regions & b.regions):
+    if (a.regions or b.regions) and not (a.regions & b.regions):
         return None
     if a.application_end is not None and b.application_end is not None:
         if a.application_end != b.application_end:

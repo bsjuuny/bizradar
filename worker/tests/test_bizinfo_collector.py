@@ -19,6 +19,7 @@ import pytest
 from worker.collectors.base import CollectorError, RawRecord
 from worker.collectors.bizinfo import (
     BizInfoCollector,
+    StoredRow,
     extract_items,
     html_to_text,
     parse_period,
@@ -48,10 +49,14 @@ def _raw(item: dict) -> RawRecord:
     )
 
 
-def _collector(handler=None, api_key: str | None = KEY) -> BizInfoCollector:
+def _collector(handler=None, api_key: str | None = KEY, stored=None) -> BizInfoCollector:
     client = httpx.Client(transport=httpx.MockTransport(handler)) if handler else None
     return BizInfoCollector(
-        settings=_settings(api_key), client=client, today=TODAY, sleep=lambda seconds: None
+        settings=_settings(api_key),
+        client=client,
+        today=TODAY,
+        sleep=lambda seconds: None,
+        stored=stored,
     )
 
 
@@ -119,6 +124,12 @@ def test_extract_items_unknown_schema_raises():
         ("2026-10-01 ~", None),  # open end: no deadline to read
         # An end without a year that falls before the start is in the next year.
         ("2025. 12. 15. ~ 1. 15.", (date(2025, 12, 15), date(2026, 1, 15))),
+        # ...including Feb 29 of a leap next year (not a ValueError on the start's year).
+        ("2027. 12. 1. ~ 2. 29.", (date(2027, 12, 1), date(2028, 2, 29))),
+        # But not a typo: as a date this would be a 347-day window, D-360 and open for a
+        # year. It stays text.
+        ("2026. 10. 20. ~ 10. 2.", None),
+        ("2026. 3. 1. ~ 2. 28.", None),
     ],
 )
 def test_parse_period_reads_only_real_date_ranges(raw, expected):
@@ -136,6 +147,9 @@ def test_parse_period_reads_only_real_date_ranges(raw, expected):
         # K-Startup-style organization tag - not a region.
         ("[한국도로공사] 2026년 상생형 창업, 벤처기업 지원사업", None),
         ("[서울ㆍ한국도로공사] ...", None),
+        # Regions separated by a space only.
+        ("[대구 경북] 2026년 ...", "대구·경북"),
+        ("[서울 강남구] ...", None),  # 강남구 isn't in the vocabulary
     ],
 )
 def test_parse_region_only_from_known_region_tags(title, expected):
@@ -389,8 +403,8 @@ def test_transport_error_message_never_contains_the_key():
 
 
 def test_run_persists_every_record_through_repository(monkeypatch):
+    # No stored state given (None: unknown) -> every row is written.
     persisted = []
-    monkeypatch.setattr("worker.repositories.support_programs.fetch_recruiting_bizinfo", dict)
     monkeypatch.setattr(
         "worker.repositories.support_programs.upsert_bizinfo_program", persisted.append
     )
@@ -402,63 +416,59 @@ def test_run_persists_every_record_through_repository(monkeypatch):
     assert result.persisted == 5
     assert result.failed == 0
     assert [p.external_id for p in persisted][0] == "PBLN_000000000127023"
+    assert collector.unchanged_ids == []
 
 
 def test_unchanged_rows_are_not_resent(monkeypatch):
-    collector = _collector(lambda request: httpx.Response(200, text=_fixture_text()))
     items = extract_items(_fixture_text())
-    first = collector.normalize(_raw(items[0]))
-    second = collector.normalize(_raw(items[1]))
-    # Only recruiting rows are in the state: second was closed and is listed again, so
-    # it is absent and gets written (reopened).
+    first = _collector().normalize(_raw(items[0]))
+    second = _collector().normalize(_raw(items[1]))
     stored = {
-        first.external_id: ("row-1", first.content_hash),  # unchanged -> skipped
-        "PBLN_000000000127013": ("row-3", "an-older-hash"),  # content changed -> sent
+        first.external_id: StoredRow("row-1", first.content_hash, True),  # unchanged
+        # Closed (delisted earlier) and listed again: reopened, so written.
+        second.external_id: StoredRow("row-2", second.content_hash, False),
+        "PBLN_000000000127013": StoredRow("row-3", "an-older-hash", True),  # content changed
     }
-    assert second.external_id not in stored
-    lookups = []
-    monkeypatch.setattr(
-        "worker.repositories.support_programs.fetch_recruiting_bizinfo",
-        lambda: lookups.append(1) or stored,
-    )
     persisted = []
     monkeypatch.setattr(
         "worker.repositories.support_programs.upsert_bizinfo_program", persisted.append
     )
+    collector = _collector(lambda request: httpx.Response(200, text=_fixture_text()), stored=stored)
 
     result = collector.run()
 
     assert result.persisted == 5 and result.failed == 0
-    assert collector.unchanged == 1
+    assert collector.unchanged_ids == ["row-1"]  # the job marks these as seen
     assert first.external_id not in [p.external_id for p in persisted]
     assert len(persisted) == 4
-    assert lookups == [1]  # stored state is read once per run
-    assert collector.stored_recruiting is stored  # handed to the closing pass
 
 
-def test_listed_row_past_its_deadline_is_written_closed(monkeypatch):
-    # Stored as recruiting with the same content, but its end date has passed since: the
-    # skip must not keep it open.
+def test_listed_row_past_its_deadline_is_closed_once_then_skipped(monkeypatch):
     item = dict(extract_items(_fixture_text())[0])
     item["reqstBeginEndDe"] = "20260901 ~ 20260930"
-    collector = _collector(
-        lambda request: httpx.Response(200, text=json.dumps({"jsonArray": [item]}))
-    )
-    normalized = collector.normalize(_raw(item))
+    normalized = _collector().normalize(_raw(item))
     assert normalized.recruiting is False
-    monkeypatch.setattr(
-        "worker.repositories.support_programs.fetch_recruiting_bizinfo",
-        lambda: {normalized.external_id: ("row-1", normalized.content_hash)},
-    )
     persisted = []
     monkeypatch.setattr(
         "worker.repositories.support_programs.upsert_bizinfo_program", persisted.append
     )
 
-    collector.run()
+    def run_with(recruiting: bool) -> None:
+        collector = _collector(
+            lambda request: httpx.Response(200, text=json.dumps({"jsonArray": [item]})),
+            stored={
+                normalized.external_id: StoredRow("row-1", normalized.content_hash, recruiting)
+            },
+        )
+        collector.run()
 
+    # Stored as recruiting with the same content: the skip must not keep it open.
+    run_with(recruiting=True)
     assert [p.recruiting for p in persisted] == [False]
-    assert collector.unchanged == 0
+    # Stored closed, still listed: nothing to write (fetch_bizinfo_state includes
+    # recently seen rows so this case is recognized).
+    run_with(recruiting=False)
+    assert len(persisted) == 1
 
 
 def test_source_url_must_be_an_http_url_on_bizinfo():
@@ -597,30 +607,6 @@ def test_normalize_change_changes_the_hash_even_with_the_same_payload(monkeypatc
     after = _collector().normalize(_raw(item)).content_hash
 
     assert before != after
-
-
-def test_state_read_failure_is_tried_once_then_every_row_is_written(monkeypatch):
-    calls = []
-
-    def broken_state():
-        calls.append(1)
-        raise RuntimeError("db down")
-
-    monkeypatch.setattr(
-        "worker.repositories.support_programs.fetch_recruiting_bizinfo", broken_state
-    )
-    persisted = []
-    monkeypatch.setattr(
-        "worker.repositories.support_programs.upsert_bizinfo_program", persisted.append
-    )
-    collector = _collector(lambda request: httpx.Response(200, text=_fixture_text()))
-
-    result = collector.run()
-
-    assert calls == [1]
-    assert len(persisted) == 5 and result.failed == 0
-    # The closing pass then reads the state itself.
-    assert collector.stored_recruiting is None
 
 
 def test_html_to_text_separates_table_cells_and_br_with_attributes():

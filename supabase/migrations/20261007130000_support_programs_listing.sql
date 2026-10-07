@@ -1,15 +1,20 @@
 -- Support Radar 목록 조회와 "모집 중"의 단 하나의 정의.
 --
--- support_source_sync: 출처별로 "목록에서 내려간 공고를 마감 처리하는 단계"가 마지막으로 실제로
--- 돈 시각. 기업마당 공고의 65%는 신청기간이 "예산 소진시까지" 같은 문장이라 날짜로는 마감되지
--- 않고, 오직 그 단계(worker/jobs/bizinfo_job.py, 응답이 완전할 때만 돈다)로 마감된다. 키가
--- 만료되거나 응답이 계속 불완전하면 그 단계가 멈추고, 그런 공고는 영원히 모집 중으로 남는다 -
--- 그래서 마감 처리가 3일 넘게 돌지 않았으면 날짜 없는 기업마당 공고를 모집 중으로 보지 않는다.
+-- last_seen_at: 목록형 출처(기업마당)에서 그 공고를 마지막으로 본 시각. 기업마당 응답은 "지금
+-- 게시 중인 공고 전부"라서, 워커가 매시간 응답에 있던 공고마다 이 값을 새로 쓴다
+-- (worker/jobs/bizinfo_job.py). 날짜 없이 "예산 소진시까지"인 공고(65%)는 목록에서 내려가는
+-- 것 말고는 마감될 길이 없는데, 내려간 공고를 마감 처리하는 단계는 응답이 완전할 때만
+-- 돈다 - 키가 만료되거나 응답이 계속 불완전하면 그 단계가 멈추고, 그런 공고는 영원히 모집
+-- 중으로 남는다. 그래서 3일 넘게 목록에서 보이지 않은 행은 모집 중으로 보지 않는다. 행마다
+-- 따지므로 응답에 공고 하나가 빠지거나 겹쳐도 그 공고만 영향을 받는다. NULL은 "추적하지
+-- 않음"(K-Startup, 그리고 이 컬럼이 생기기 전에 저장된 행)이고, 이 조건을 적용하지 않는다 -
+-- 일부러 채워 넣지 않는다: 채워 두면 새 워커가 돌기 전에 3일이 지나는 순간 기업마당 공고가
+-- 전부 사라진다.
 --
 -- is_open(support_programs): "모집 중"의 유일한 정의이자 PostgREST 계산 컬럼(select=...,is_open,
 -- is_open=eq.true). 출처가 모집 중이라고 하거나(recruiting) 모집 여부를 모를 때(null)는 마감일이
--- 있으면, 그리고 마감일이 없거나 오늘(서울) 이후이고, 날짜 없는 기업마당 공고라면 위 마감 처리가
--- 최근에 돌았을 때. 출처가 마감이라고 한 공고(false)는 날짜와 상관없이 마감이다.
+-- 있으면, 그리고 마감일이 없거나 오늘(서울) 이후이고, 추적하는 행이라면 최근 3일 안에 목록에
+-- 있었을 때. 출처가 마감이라고 한 공고(false)는 날짜와 상관없이 마감이다.
 -- 상세 화면, 워커의 중복 짝짓기, list_support_programs가 모두 이 함수만 쓴다. 뷰(p.*)로 내보내면
 -- 뷰를 만들 때의 컬럼 목록으로 고정돼 컬럼을 더할 때마다 다시 만들어야 해서, 계산 컬럼으로 둔다.
 -- application_end는 날짜의 자정(UTC, 수집기가 +00:00을 붙여 저장)이므로, 오늘(서울) 날짜도
@@ -30,23 +35,7 @@
 --
 -- security invoker: 조회하는 사용자의 RLS를 그대로 적용한다.
 
-create table support_source_sync (
-  source text primary key,
-  last_complete_at timestamptz not null
-);
-
-alter table support_source_sync enable row level security;
-
--- Not sensitive, and is_open() reads it as the querying user.
-create policy support_source_sync_select_authenticated on support_source_sync
-  for select
-  to authenticated
-  using (true);
-
-grant select on support_source_sync to authenticated;
-
--- The 2026-10-07 runs before this migration were complete; the worker refreshes it hourly.
-insert into support_source_sync (source, last_complete_at) values ('bizinfo', now());
+alter table support_programs add column last_seen_at timestamptz;
 
 create function support_program_today_utc()
   returns timestamptz
@@ -63,16 +52,7 @@ create function is_open(p support_programs)
   as $$
     select coalesce(p.recruiting, p.application_end is not null)
       and (p.application_end is null or p.application_end >= support_program_today_utc())
-      and (
-        p.source <> 'bizinfo'
-        or p.application_end is not null
-        or exists (
-          select 1
-          from support_source_sync s
-          where s.source = 'bizinfo'
-            and s.last_complete_at >= now() - interval '3 days'
-        )
-      )
+      and (p.last_seen_at is null or p.last_seen_at >= now() - interval '3 days')
   $$;
 
 create function list_support_programs(

@@ -33,7 +33,8 @@ NON_SPECIFIC = frozenset({"전국", "비수도권"})
 
 REGION_WORDS = PROVINCES | GROUPS.keys() | NON_SPECIFIC
 
-SEPARATORS = re.compile(r"\s*[ㆍ·・,/]\s*")
+# Middle dots, commas, slashes - or just spaces ("[대구 경북]").
+SEPARATORS = re.compile(r"\s*[ㆍ·・,/]\s*|\s+")
 
 
 def split_region(value: str) -> list[str]:

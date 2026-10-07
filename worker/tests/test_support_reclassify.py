@@ -207,6 +207,18 @@ def test_rows_needing_the_same_change_share_one_request(monkeypatch):
     ]
 
 
+def test_a_row_that_cannot_be_re_derived_does_not_stop_the_others(repo, caplog):
+    # A stored payload the collector can't normalize (not even a JSON object).
+    repo.rows["bizinfo"].insert(0, _bizinfo_row("bz-bad", "x") | {"raw_payload": "not an object"})
+
+    result = support_reclassify.run()
+
+    assert result["failed"] == 1
+    assert result["rows"] == 3
+    assert "bz-bad" not in [row_id for row_id, _ in repo.updates]
+    assert any("could not re-derive" in record.message for record in caplog.records)
+
+
 def test_dry_run_writes_nothing(repo):
     result = support_reclassify.run(dry_run=True)
 
