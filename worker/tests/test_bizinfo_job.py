@@ -1,5 +1,5 @@
 import logging
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
@@ -8,10 +8,12 @@ from worker.collectors.bizinfo import StoredRow
 from worker.config import Settings
 from worker.dedupe.support_programs import ProgramTitle
 from worker.jobs import bizinfo_job
+from worker.repositories import support_programs as repository
 
 STORED = {
-    "A": StoredRow("row-a", "hash-a", True),
-    "C": StoredRow("row-c", "hash-c", True),
+    "A": StoredRow("row-a", "hash-a", True),  # listed, never marked seen -> refreshed
+    "B": StoredRow("row-b", "hash-b", True, datetime.now(UTC) - timedelta(hours=2)),  # fresh
+    "C": StoredRow("row-c", "hash-c", True),  # not listed
 }
 
 
@@ -20,7 +22,7 @@ class FakeCollector:
         self.complete = complete
         self.listed_ids = set(listed)
         self.stored = stored
-        self.unchanged_ids = ["row-a"]
+        self.unchanged = 1
 
     def __enter__(self):
         return self
@@ -52,6 +54,10 @@ class FakeRepo:
             ProgramTitle("bz-2", "2026년 중소기업 수출지원사업 통합 공고", None),
         ]
         self.current = {"bz-1": None, "bz-2": "ks-old"}
+        # bz-2's mark points at a row that no longer matches it under the current rule.
+        self.originals = {"ks-old": ProgramTitle("ks-old", "2026년 전혀 다른 지원사업", None)}
+
+    seen_refresh_due = staticmethod(repository.seen_refresh_due)
 
     def fetch_bizinfo_state(self):
         return STORED
@@ -67,8 +73,12 @@ class FakeRepo:
     def fetch_open_kstartup_titles(self):
         return self.kstartup
 
-    def fetch_open_bizinfo_titles(self):
-        return self.bizinfo, self.current
+    def fetch_bizinfo_for_dedupe(self):
+        marked = [row for row in self.bizinfo if self.current.get(row.id)]
+        return self.bizinfo, marked, self.current
+
+    def fetch_program_titles(self, row_ids):
+        return {row_id: self.originals[row_id] for row_id in row_ids if row_id in self.originals}
 
     def set_duplicate_of(self, changes):
         self.changes = dict(changes)
@@ -181,6 +191,7 @@ def test_state_read_failure_writes_every_row_and_close_reads_for_itself(
     assert made[0].stored is None
     assert configured.closed_with == {"A", "B"}
     assert configured.closed_from is None
+    assert configured.seen is None  # no ids to refresh; every row was upserted instead
 
 
 def test_job_isolates_collector_failure(monkeypatch, configured, caplog):
@@ -226,6 +237,19 @@ def test_seen_marking_failure_does_not_stop_closing(monkeypatch, configured, cap
 
     assert any("as seen failed" in record.message for record in caplog.records)
     assert configured.closed_with == {"A", "B"}
+
+
+def test_a_pair_stays_paired_after_its_original_closes(monkeypatch, configured):
+    # ks-1 has closed: it is no longer among the open K-Startup rows, but bz-1 still
+    # repeats it. Clearing the mark would list the program twice under "마감 포함 전체".
+    configured.current = {"bz-1": "ks-1", "bz-2": None}
+    configured.originals = {"ks-1": configured.kstartup[0]}
+    configured.kstartup = []
+    monkeypatch.setattr(bizinfo_job, "BizInfoCollector", lambda stored: FakeCollector())
+
+    bizinfo_job.run()
+
+    assert configured.changes == {}
 
 
 def test_dedupe_failure_is_logged_not_raised(monkeypatch, configured, caplog):

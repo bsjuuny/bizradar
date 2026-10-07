@@ -123,12 +123,15 @@ Implemented (Phase 1):
   `docs/DATA_PIPELINE.md#support-programs-k-startup-implemented-2026-08-10`. RLS: any
   authenticated user can `select`; only `service_role` writes - same pattern as
   `opportunities`.
+- `is_open_on_its_own(support_programs)` - computed column: recruiting - or unknown with
+  a deadline - and no deadline or one not yet passed, Asia/Seoul, evaluated at query
+  time; a row with `last_seen_at` (기업마당) must also have been in the source's list
+  within 3 days. NULL when there is neither a status nor a deadline (unknown).
 - `is_open(support_programs)` - a PostgREST computed column (`select=...,is_open`,
-  `is_open=eq.true`): recruiting - or unknown with a deadline - and no deadline or one not
-  yet passed, Asia/Seoul, evaluated at query time; a row with `last_seen_at` (기업마당)
-  must also have been in the source's list within 3 days. The only definition of 모집 중. (A computed column rather than a
-  `p.*` view, whose column list would freeze at creation.) Dates are stored as UTC
-  midnight with an explicit offset.
+  `is_open=eq.true`): `is_open_on_its_own`, and for a paired copy (`duplicate_of`) also
+  its original's - a copy closes with its original. The only definition of 모집 중. (A
+  computed column rather than a `p.*` view, whose column list would freeze at creation.)
+  Dates are stored as UTC midnight with an explicit offset.
 - `support_programs.last_seen_at` (nullable) - when a 기업마당 posting was last in the
   hourly list response; null = not tracked (K-Startup, and rows stored before the
   column). Read by `is_open`; not derived from the payload, so reclassify never touches
@@ -174,8 +177,11 @@ Planned (later phases, see `docs/MVP_SCOPE.md`):
 - `to_tsvector('simple', ...)` (Postgres has no Korean dictionary) only matches whole
   tokens - searching "교육" against a title containing the compound token "교육여행"
   returns nothing, because there's no stemming to split it. Verified live before writing
-  any app code. Added `pg_trgm` + GIN trigram indexes for real substring search via
-  `ilike`, which is what the UI actually uses; kept the `tsvector`/GIN column too
+  any app code. Added `pg_trgm` + GIN trigram indexes for real substring search - first
+  via `ilike`, since 2026-10-08 via `imatch` with the regex literal prefix `***=`
+  (`apps/web/src/lib/postgrest.ts`: PostgREST turns `*` in like values into `%`, so a
+  term containing `*` couldn't be searched literally; trigram indexes serve regex
+  matches too); kept the `tsvector`/GIN column too
   (exact-token search, e.g. by organization name, still has value and does no harm).
 - Deleting a route (`app/dashboard/page.tsx` moved under a route group) left a stale
   reference in `.next/types/`, which made `tsc --noEmit` fail on a file that no longer

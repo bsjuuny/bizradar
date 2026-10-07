@@ -22,8 +22,11 @@ export type SupportProgramSummary = {
   category: string | null;
   region: string | null;
   recruiting: boolean | null;
-  /** is_open(support_programs) in SQL - the one definition of 모집 중. */
-  is_open: boolean;
+  /**
+   * is_open(support_programs) in SQL - the one definition of 모집 중. null = unknown: the
+   * source gave neither a 모집 status nor a deadline (shown as "—", never as 마감).
+   */
+  is_open: boolean | null;
   investment_linked: boolean;
   it_related: boolean;
   application_end: string | null;

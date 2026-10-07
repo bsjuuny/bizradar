@@ -3,8 +3,9 @@ BIZINFO_API_KEY is configured. A failure here must not take down the scheduler o
 jobs (docs/DATA_PIPELINE.md#failure-isolation) - existing support_programs rows are left
 untouched on failure, since collection only ever upserts.
 
-After a successful collection every listed row has a fresh last_seen_at - upserted rows
-set it, the ones skipped as unchanged are marked here. is_open() in SQL stops counting a
+After a successful collection every listed row has a recent last_seen_at - upserted
+rows set it, and the job refreshes the stored ones that are listed once theirs is a day
+old (support_programs.seen_refresh_due). is_open() in SQL stops counting a
 기업마당 row as 모집 중 once it has gone 3 days unseen: for the 65% of postings whose
 신청기간 is a phrase ("예산 소진시까지"), leaving the list is the only way they close, and
 pass 1 below can stall (expired key, responses that keep coming back incomplete).
@@ -18,9 +19,10 @@ Two follow-up passes, each isolated from the other:
    기업마당 copy with a K-Startup original that has left the 모집 중 view): 기업마당 rows
    that repeat an open K-Startup announcement get duplicate_of set, so Support Radar
    shows the program once (worker/dedupe/support_programs.py). K-Startup is the row kept:
-   it is the original posting and carries more fields (모집 여부, 지원대상, 지역). Runs
-   here rather than in the K-Startup job because only BizInfo rows are ever hidden; a
-   K-Startup row collected in between is picked up within the hour.
+   it is the original posting and carries more fields (모집 여부, 지원대상, 지역). A pair
+   stays paired after the original closes (plan_duplicate_marks) - the copy closes with
+   it. Runs here rather than in the K-Startup job because only BizInfo rows are ever
+   hidden; a K-Startup row collected in between is picked up within the hour.
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from datetime import UTC, datetime
 
 from worker.collectors.bizinfo import BizInfoCollector, StoredRow
 from worker.config import get_settings
-from worker.dedupe.support_programs import find_duplicates, plan_updates
+from worker.dedupe.support_programs import plan_duplicate_marks
 from worker.repositories import support_programs
 
 logger = logging.getLogger(__name__)
@@ -84,7 +86,7 @@ def collect() -> None:
         )
         return
 
-    unchanged = len(collector.unchanged_ids)
+    unchanged = collector.unchanged
     logger.info(
         "bizinfo job finished",
         extra={
@@ -108,10 +110,13 @@ def collect() -> None:
             extra={"job": JOB, "source": "bizinfo", "errors": result.errors[:10]},
         )
 
-    try:
-        support_programs.mark_bizinfo_seen(collector.unchanged_ids)
-    except Exception:
-        logger.exception("bizinfo: recording listed rows as seen failed", extra={"job": JOB})
+    if stored is not None:
+        try:
+            support_programs.mark_bizinfo_seen(
+                support_programs.seen_refresh_due(stored, collector.listed_ids, started_at)
+            )
+        except Exception:
+            logger.exception("bizinfo: recording listed rows as seen failed", extra={"job": JOB})
 
     if collector.complete:
         try:
@@ -125,8 +130,16 @@ def collect() -> None:
 
 def dedupe() -> None:
     kstartup = support_programs.fetch_open_kstartup_titles()
-    bizinfo, current = support_programs.fetch_open_bizinfo_titles()
-    changes = plan_updates(current, find_duplicates(keep=kstartup, hide=bizinfo))
+    bizinfo, marked_rows, current = support_programs.fetch_bizinfo_for_dedupe()
+    originals = support_programs.fetch_program_titles(
+        original_id for row in marked_rows if (original_id := current[row.id]) is not None
+    )
+    marked = [
+        (row, originals[original_id])
+        for row in marked_rows
+        if (original_id := current[row.id]) is not None and original_id in originals
+    ]
+    changes = plan_duplicate_marks(keep=kstartup, hide=bizinfo, marked=marked, current=current)
     support_programs.set_duplicate_of(changes)
     logger.info(
         "bizinfo: cross-source dedupe finished",
@@ -134,6 +147,7 @@ def dedupe() -> None:
             "job": JOB,
             "kstartup_open": len(kstartup),
             "bizinfo_open": len(bizinfo),
+            "already_marked": len(marked),
             "marked": sum(1 for value in changes.values() if value is not None),
             "cleared": sum(1 for value in changes.values() if value is None),
         },

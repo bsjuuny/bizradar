@@ -11,6 +11,7 @@ import {
 } from "@/lib/challenges";
 import { isChallengeEnabled } from "@/lib/features";
 import { formatCurrencyKRW, formatDate, formatDday } from "@/lib/format";
+import type { SearchParams } from "@/lib/search-params";
 import {
   PARTICIPATION_LABELS,
   POLICY_LABELS,
@@ -20,8 +21,6 @@ import {
   StatusBadge,
   TypeBadge,
 } from "./challenge-badges";
-
-type SearchParams = Record<string, string | string[] | undefined>;
 
 function buildHref(filters: ChallengeFilters, overrides: Partial<ChallengeFilters>) {
   const next = { ...filters, ...overrides };

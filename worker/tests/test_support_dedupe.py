@@ -11,6 +11,7 @@ from worker.dedupe.support_programs import (
     find_duplicates,
     match_score,
     normalize_title,
+    plan_duplicate_marks,
     plan_updates,
 )
 
@@ -248,3 +249,36 @@ def test_gwangju_and_jeonnam_are_different_regions():
 
     assert not _same(gwangju, jeonnam)
     assert _same(gwangju, merged)  # the merged 전남광주 covers 광주
+
+
+KS = ProgramTitle(
+    "ks-1",
+    "2026년 서울창업센터 관악 X SK에코플랜트 오픈이노베이션 프로그램 참여기업 모집",
+    date(2026, 10, 11),
+)
+BZ = ProgramTitle(
+    "bz-1",
+    "[서울] 2026년 서울창업센터 관악 × SK에코플랜트 오픈이노베이션 참여기업 모집 공고",
+    date(2026, 10, 11),
+)
+
+
+def test_new_pair_is_marked():
+    assert plan_duplicate_marks([KS], [BZ], [], {"bz-1": None}) == {"bz-1": "ks-1"}
+
+
+def test_mark_survives_the_original_closing():
+    # KS is no longer open (not in keep); BZ may or may not be open itself.
+    assert plan_duplicate_marks([], [BZ], [(BZ, KS)], {"bz-1": "ks-1"}) == {}
+    assert plan_duplicate_marks([], [], [(BZ, KS)], {"bz-1": "ks-1"}) == {}
+
+
+def test_mark_is_cleared_once_the_rule_no_longer_matches():
+    other = ProgramTitle("ks-9", "2026년 전혀 다른 지원사업", None)
+    assert plan_duplicate_marks([], [BZ], [(BZ, other)], {"bz-1": "ks-9"}) == {"bz-1": None}
+
+
+def test_mark_moves_to_a_better_open_original():
+    weaker = ProgramTitle("ks-2", "2026년 서울창업센터 오픈이노베이션 참여기업 모집", None)
+    marks = plan_duplicate_marks([KS], [BZ], [(BZ, weaker)], {"bz-1": "ks-2"})
+    assert marks == {"bz-1": "ks-1"}

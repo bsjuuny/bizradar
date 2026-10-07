@@ -1,13 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { escapeLikeTerm, ilikeAnyFilter, quotePostgrestValue } from "./postgrest";
+import { containsAnyFilter, literalPattern, quotePostgrestValue } from "./postgrest";
 
-describe("escapeLikeTerm", () => {
-  it("escapes LIKE wildcards and the escape character itself", () => {
-    expect(escapeLikeTerm("100%_a\\b")).toBe("100\\%\\_a\\\\b");
-  });
-
-  it("turns '*' (PostgREST's alias for '%') into a single-character wildcard", () => {
-    expect(escapeLikeTerm("R*D")).toBe("R_D");
+describe("literalPattern", () => {
+  it("prefixes the ARE literal director, leaving the term untouched", () => {
+    expect(literalPattern("R*D 100%_(a)")).toBe("***=R*D 100%_(a)");
   });
 });
 
@@ -17,17 +13,21 @@ describe("quotePostgrestValue", () => {
   });
 });
 
-describe("ilikeAnyFilter", () => {
-  // These strings were sent to the live PostgREST endpoint (2026-10-07) and matched the
-  // same rows as a plain single-column ilike; unquoted, "창업, 벤처" failed to parse.
+describe("containsAnyFilter", () => {
+  // These strings were sent to the live PostgREST endpoint (2026-10-08) and matched the
+  // same rows as ilike '%…%' (except "*", which ilike turns into a wildcard).
   it("keeps commas and parentheses inside the quoted value", () => {
-    expect(ilikeAnyFilter(["title", "organization"], "창업, 벤처")).toBe(
-      'title.ilike."%창업, 벤처%",organization.ilike."%창업, 벤처%"',
+    expect(containsAnyFilter(["title", "organization"], "창업, 벤처")).toBe(
+      'title.imatch."***=창업, 벤처",organization.imatch."***=창업, 벤처"',
     );
-    expect(ilikeAnyFilter(["title"], "기술개발(R&D)")).toBe('title.ilike."%기술개발(R&D)%"');
+    expect(containsAnyFilter(["title"], "기술개발(R&D)")).toBe('title.imatch."***=기술개발(R&D)"');
   });
 
-  it("escapes LIKE wildcards before quoting", () => {
-    expect(ilikeAnyFilter(["title"], "100%")).toBe('title.ilike."%100\\\\%%"');
+  it("passes LIKE wildcards and '*' through as plain characters", () => {
+    expect(containsAnyFilter(["title"], "100%_*")).toBe('title.imatch."***=100%_*"');
+  });
+
+  it("escapes a backslash for the quoted value", () => {
+    expect(containsAnyFilter(["title"], "a\\b")).toBe('title.imatch."***=a\\\\b"');
   });
 });

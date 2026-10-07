@@ -106,7 +106,7 @@ _IT = re.compile("|".join(f"(?:{pattern})" for pattern in _IT_PATTERNS))
 # main title says nothing about IT.
 _FUNDING_PROJECT = re.compile(r"(?:사업|구축)\s*[)）]\s*$")
 _IT_INDUSTRY_PROGRAM = re.compile(
-    r"디지털기업|소프트웨어|정보보호|ICT|(?<![A-Za-z])SW(?![A-Za-z])"
+    r"디지털기업|소프트웨어|정보보호|(?<![A-Za-z])(?:ICT|SW)(?![A-Za-z])"
     # IT vouchers fund IT vendors: "(AI바우처 지원사업)", "(데이터바우처 지원사업)".
     r"|(?:(?<![A-Za-z])AI|데이터|클라우드|SW|소프트웨어|정보보호|보안)\s*바우처",
     re.IGNORECASE,

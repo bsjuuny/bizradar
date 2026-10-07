@@ -10,7 +10,7 @@ Phase 6 - see below for what's actually built vs. still just interface/design.
 `project_analyses` on the detail page) directly (RLS: any authenticated user can
 `select`) - no API route needed, Server Components query Supabase straight from
 `apps/web/src/lib/opportunities.ts`. List page: paginated (20/page), substring search
-over title/organization (`pg_trgm` + `ilike` - see `docs/DATABASE.md`'s Phase 3 gotchas
+over title/organization (`pg_trgm` + literal `imatch` - see `docs/DATABASE.md`'s Phase 3 gotchas
 for why not plain full text search), a category filter tab (전체/IT 관련/IT 무관/미분류)
 and badge per row, empty/loading/error states via Next's
 `loading.tsx`/`error.tsx`/`not-found.tsx` file conventions. Detail page: full field

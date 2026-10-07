@@ -1,7 +1,7 @@
 import "server-only";
 
 import { requireUser } from "@/lib/dal";
-import { escapeLikeTerm } from "@/lib/postgrest";
+import { literalPattern } from "@/lib/postgrest";
 import { type SearchParams, enumValue, one } from "@/lib/search-params";
 import { createClient } from "@/lib/supabase/server";
 
@@ -160,7 +160,7 @@ export async function getChallenges(filters: ChallengeFilters): Promise<Challeng
     .order("apply_end_date", { ascending: true, nullsFirst: false })
     .range(from, to);
 
-  if (filters.q) query = query.ilike("search_text", `%${escapeLikeTerm(filters.q)}%`);
+  if (filters.q) query = query.filter("search_text", "imatch", literalPattern(filters.q));
   if (filters.type) query = query.eq("challenge_type", filters.type);
   if (filters.status) query = query.eq("status", filters.status);
   if (filters.ai) query = query.eq("ai_policy", filters.ai);
@@ -170,7 +170,7 @@ export async function getChallenges(filters: ChallengeFilters): Promise<Challeng
   if (filters.entry === "team") query = query.gt("team_max", 1);
   if (filters.hasPrize) query = query.gt("total_prize_amount", 0);
   if (filters.organizer) {
-    query = query.ilike("organizer", `%${escapeLikeTerm(filters.organizer)}%`);
+    query = query.filter("organizer", "imatch", literalPattern(filters.organizer));
   }
   if (filters.technology) {
     query = query.contains("technology_keywords", [filters.technology]);

@@ -2,7 +2,7 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/dal";
-import { ilikeAnyFilter } from "@/lib/postgrest";
+import { containsAnyFilter } from "@/lib/postgrest";
 
 export const DEFAULT_PAGE_SIZE = 20;
 export const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
@@ -178,7 +178,7 @@ export async function getAwardResults({
 
   const term = q?.trim();
   if (term) {
-    query = query.or(ilikeAnyFilter(["title", "winner_name"], term));
+    query = query.or(containsAnyFilter(["title", "winner_name"], term));
   }
 
   const { data, error, count } = await query;

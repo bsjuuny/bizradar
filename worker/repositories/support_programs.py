@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 from worker.collectors.bizinfo import BizInfoNormalizedProgram, StoredRow
 from worker.collectors.kstartup import KStartupNormalizedProgram
@@ -72,35 +72,64 @@ def _read_all(table: str, columns: str, narrow: Callable[[Any], Any]) -> list[di
     return fetch_all_pages(lambda: narrow(client.table(table).select(columns)), key="id")
 
 
-# How long a 기업마당 row may be missing from the list and still count as open - must match
-# the interval in is_open() (supabase/migrations/20261007130000_support_programs_listing.sql).
-LISTING_STALE_AFTER = timedelta(days=3)
+# A listed row's last_seen_at is rewritten only once it is this old, so the hourly run
+# doesn't rewrite all ~1,450 rows (each update also bumps updated_at and leaves a dead
+# tuple). is_open() treats a row as gone after 3 days unseen
+# (supabase/migrations/20261007130000_support_programs_listing.sql) - that must stay well
+# above this interval, or listed rows would flicker out between refreshes.
+LAST_SEEN_REFRESH_AFTER = timedelta(days=1)
+# fetch_bizinfo_state's "recently seen": every listed row was refreshed within
+# LAST_SEEN_REFRESH_AFTER (plus a run), so twice that covers them all.
+_STATE_WINDOW = 2 * LAST_SEEN_REFRESH_AFTER
+
+
+def _parse_timestamp(value: str | None) -> datetime | None:
+    return datetime.fromisoformat(value) if value else None
 
 
 def fetch_bizinfo_state() -> dict[str, StoredRow]:
     """external_id -> StoredRow for the 기업마당 rows a run can touch: the recruiting ones
-    (the only ones the closing pass can close) and any seen in the list within
-    LISTING_STALE_AFTER (so a listed posting past its deadline, stored as closed, is
-    still recognized as unchanged). Not the closed history - ~1,500 new postings a month
-    pile up there, and a closed posting that reappears is simply written again."""
-    since = (datetime.now(UTC) - LISTING_STALE_AFTER).isoformat()
+    (the only ones the closing pass can close) and any seen in the list recently (so a
+    listed posting past its deadline, stored as closed, is still recognized as
+    unchanged). Not the closed history - ~1,500 new postings a month pile up there, and a
+    closed posting that reappears is simply written again."""
+    since = (datetime.now(UTC) - _STATE_WINDOW).isoformat()
     rows = _read_all(
         "support_programs",
-        "id, external_id, content_hash, recruiting",
+        "id, external_id, content_hash, recruiting, last_seen_at",
         lambda query: query.eq("source", "bizinfo").or_(
             f'recruiting.is.true,last_seen_at.gte."{since}"'
         ),
     )
     return {
-        row["external_id"]: StoredRow(row["id"], row["content_hash"], row["recruiting"])
+        row["external_id"]: StoredRow(
+            row["id"],
+            row["content_hash"],
+            row["recruiting"],
+            _parse_timestamp(row["last_seen_at"]),
+        )
         for row in rows
     }
 
 
+def seen_refresh_due(
+    stored: Mapping[str, StoredRow], listed_ids: Iterable[str], now: datetime
+) -> list[str]:
+    """Ids of the stored rows that are in the list just fetched and whose last_seen_at is
+    missing or older than LAST_SEEN_REFRESH_AFTER - whether persist() skipped them, wrote
+    them or failed on them: being listed is what counts."""
+    cutoff = now - LAST_SEEN_REFRESH_AFTER
+    due = []
+    for external_id in listed_ids:
+        row = stored.get(external_id)
+        if row is not None and (row.last_seen_at is None or row.last_seen_at < cutoff):
+            due.append(row.id)
+    return due
+
+
 def mark_bizinfo_seen(row_ids: Sequence[str]) -> None:
-    """Record that these rows were in the list just fetched - the ones the collector
-    skipped as unchanged (upserted rows set last_seen_at themselves). is_open() stops
-    counting a 기업마당 row as open once it has gone LISTING_STALE_AFTER unseen."""
+    """Record that these rows were in the list just fetched (seen_refresh_due). is_open()
+    stops counting a 기업마당 row as open once it has gone 3 days unseen."""
     update_programs(row_ids, {"last_seen_at": datetime.now(UTC).isoformat()})
 
 
@@ -150,22 +179,44 @@ def fetch_open_kstartup_titles() -> list[ProgramTitle]:
     return [_program_title(row) for row in rows]
 
 
-def fetch_open_bizinfo_titles() -> tuple[list[ProgramTitle], dict[str, str | None]]:
-    """The 기업마당 rows to pair (open by is_open, same as the K-Startup side) and the
-    current duplicate_of of every 기업마당 row that is recruiting *or* still carries a
-    mark. Rows that aren't open are never paired, so including their marks here is what
-    clears them: otherwise a mark set while a row was open - or by an older rule - would
-    stay on it forever after it closed. is_open implies recruiting for 기업마당 (recruiting
-    is never NULL there), so the recruiting-or-marked read covers every candidate."""
+def fetch_bizinfo_for_dedupe() -> tuple[
+    list[ProgramTitle], list[ProgramTitle], dict[str, str | None]
+]:
+    """(open rows to pair, rows that carry a mark, id -> current duplicate_of of both).
+
+    "Open" is is_open_on_its_own - the row's own data, before is_open() follows the mark to
+    its original (otherwise a copy whose original closed could never be re-paired). It
+    implies recruiting for 기업마당 (recruiting is never NULL there), so the
+    recruiting-or-marked read covers every candidate. Marked rows are read whether open
+    or not: plan_duplicate_marks re-checks each against its original."""
     rows = _read_all(
         "support_programs",
-        "id, title, application_end, region, duplicate_of, is_open",
+        "id, title, application_end, region, duplicate_of, is_open_on_its_own",
         lambda query: query.eq("source", "bizinfo").or_(
             "recruiting.is.true,duplicate_of.not.is.null"
         ),
     )
-    candidates = [_program_title(row) for row in rows if row["is_open"] is True]
-    return candidates, {row["id"]: row["duplicate_of"] for row in rows}
+    open_rows = [_program_title(row) for row in rows if row["is_open_on_its_own"] is True]
+    marked_rows = [_program_title(row) for row in rows if row["duplicate_of"] is not None]
+    return open_rows, marked_rows, {row["id"]: row["duplicate_of"] for row in rows}
+
+
+def fetch_program_titles(row_ids: Iterable[str]) -> dict[str, ProgramTitle]:
+    """id -> ProgramTitle for the given rows (the originals of marked copies)."""
+    client = get_service_client()
+    titles: dict[str, ProgramTitle] = {}
+    for chunk in chunked(sorted(set(row_ids)), _UPDATE_CHUNK_SIZE):
+        rows = cast(
+            list[dict[str, Any]],
+            client.table("support_programs")
+            .select("id, title, application_end, region")
+            .in_("id", chunk)
+            .execute()
+            .data,
+        )
+        for row in rows:
+            titles[row["id"]] = _program_title(row)
+    return titles
 
 
 def set_duplicate_of(changes: Mapping[str, str | None]) -> None:

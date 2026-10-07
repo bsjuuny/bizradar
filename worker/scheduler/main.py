@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from apscheduler.executors.pool import ThreadPoolExecutor
@@ -58,17 +57,16 @@ def main() -> None:
     scheduler.add_job(g2b_job.run, "interval", hours=1, id="g2b-collect")
     scheduler.add_job(g2b_award_job.run, "interval", hours=6, id="g2b-award-collect")
     scheduler.add_job(kstartup_job.run, "interval", hours=1, id="kstartup-collect")
-    # Offset from the top-of-the-hour group (:35 has no other interval job; analyze runs
-    # at :x0, match at :x5) just to spread load. It was the first workaround for the
-    # intermittent "WinError 10035" failures (26-30 BizInfo rows per run on 2026-10-07,
-    # at :08 alongside the others); the actual fixes are the per-thread Supabase client
-    # (repositories/opportunities.py) and writing only changed rows (BizInfoCollector).
+    # At :35 past every hour (a cron trigger, so a restart doesn't push it back; analyze
+    # runs at :x0, match at :x5), away from the top-of-the-hour group, to spread load. It
+    # was the first workaround for the intermittent "WinError 10035" failures (26-30
+    # BizInfo rows per run on 2026-10-07, at :08 alongside the others); the actual fixes
+    # are the per-thread Supabase client (repositories/opportunities.py) and writing only
+    # changed rows (BizInfoCollector).
     scheduler.add_job(
         bizinfo_job.run,
-        "interval",
-        hours=1,
+        CronTrigger(minute=35, timezone="Asia/Seoul"),
         id="bizinfo-collect",
-        next_run_time=datetime.now(SEOUL) + timedelta(minutes=35),
     )
     scheduler.add_job(analyze_job.run, "interval", minutes=10, id="analyze")
     scheduler.add_job(match_job.run, "interval", minutes=15, id="match")

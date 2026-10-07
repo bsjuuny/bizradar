@@ -1,11 +1,14 @@
 /**
- * 검색어를 LIKE 패턴 안에 넣을 수 있게 바꾼다. %, _, \ 는 이스케이프한다. "*"는 PostgREST가
- * like/ilike 값에서 "%"의 별칭으로 바꿔 버리고 이스케이프할 방법이 없어서(2026-10-07 실측:
- * "R\*D"도 0건) 한 글자 와일드카드 "_"로 바꾼다 - "*" 자신을 포함해 그 자리의 아무 글자와
- * 맞고, 여러 글자를 건너뛰지는 않는다.
+ * 검색어를 글자 그대로 찾는 정규식 - imatch(~*, 대소문자 무시)에 넘긴다. "***=" 접두어는
+ * Postgres 정규식(ARE)에서 "나머지를 전부 글자 그대로 읽으라"는 뜻이라 %, _, *, (, ) 같은 글자도
+ * 그냥 글자다. ilike로는 안 된다: PostgREST가 like/ilike 값의 "*"를 "%"로 바꾸고 그걸 막을
+ * 방법이 없다("R\*D"도 0건, 2026-10-07 실측). imatch 값은 건드리지 않는다 - 2026-10-08 실측:
+ * AI, 데이터, (주), R&D, 100%, "창업, 벤처"는 ilike '%…%'와 같은 건수, "a*b"는 ilike 190건
+ * (와일드카드로 읽힘) 대 0건. 그래서 Watch 미리보기와 matchesWatch(글자 그대로 포함 여부)가
+ * 같은 결과를 낸다. pg_trgm GIN 인덱스는 정규식 검색에도 쓰인다.
  */
-export function escapeLikeTerm(term: string): string {
-  return term.replace(/[\\%_]/g, "\\$&").replace(/\*/g, "_");
+export function literalPattern(term: string): string {
+  return `***=${term}`;
 }
 
 /**
@@ -17,8 +20,8 @@ export function quotePostgrestValue(value: string): string {
   return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
 }
 
-/** columns 중 하나라도 term을 포함하는 행 - `.or()`에 넘기는 필터 문자열. */
-export function ilikeAnyFilter(columns: readonly string[], term: string): string {
-  const pattern = quotePostgrestValue(`%${escapeLikeTerm(term)}%`);
-  return columns.map((column) => `${column}.ilike.${pattern}`).join(",");
+/** columns 중 하나라도 term을 글자 그대로 포함하는 행 - `.or()`에 넘기는 필터 문자열. */
+export function containsAnyFilter(columns: readonly string[], term: string): string {
+  const pattern = quotePostgrestValue(literalPattern(term));
+  return columns.map((column) => `${column}.imatch.${pattern}`).join(",");
 }

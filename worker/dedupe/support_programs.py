@@ -144,6 +144,28 @@ def find_duplicates(keep: Iterable[ProgramTitle], hide: Iterable[ProgramTitle]) 
     return duplicates
 
 
+def plan_duplicate_marks(
+    keep: Iterable[ProgramTitle],
+    hide: Iterable[ProgramTitle],
+    marked: Iterable[tuple[ProgramTitle, ProgramTitle]],
+    current: Mapping[str, str | None],
+) -> dict[str, str | None]:
+    """The duplicate_of changes of one dedupe pass (see plan_updates).
+
+    `hide` rows (open 기업마당 rows) are paired with the best `keep` row (open K-Startup
+    rows). An existing mark - (copy, its original) in `marked` - that found no open
+    original stays as long as the pair still matches under the current rule: the original
+    closing is no reason to un-pair them. Un-pairing would list the program twice under
+    "마감 포함 전체", and would bring a date-less copy back as 모집 중 after its original's
+    deadline (is_open() closes the copy along with its original). So a mark moves only to
+    a better open original, and is cleared only when the rule no longer matches."""
+    duplicates = find_duplicates(keep, hide)
+    for copy, original in marked:
+        if copy.id not in duplicates and match_score(copy, original) is not None:
+            duplicates[copy.id] = original.id
+    return plan_updates(current, duplicates)
+
+
 def plan_updates(
     current: Mapping[str, str | None], duplicates: Mapping[str, str]
 ) -> dict[str, str | None]:

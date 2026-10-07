@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
@@ -83,6 +83,22 @@ def test_close_unlisted_reads_the_state_when_not_given(client, monkeypatch):
 
     assert support_programs.close_unlisted_bizinfo({"A"}) == 1
     assert client.requests[0]["in"] == ("id", ["row-b"])
+
+
+def test_seen_refresh_is_due_for_listed_rows_not_refreshed_for_a_day():
+    now = datetime(2026, 10, 8, 12, tzinfo=UTC)
+    stored = {
+        "A": StoredRow("row-a", "h", True, None),  # never recorded
+        "B": StoredRow("row-b", "h", True, now - timedelta(hours=25)),  # a day old
+        "C": StoredRow("row-c", "h", True, now - timedelta(hours=2)),  # fresh enough
+        "D": StoredRow("row-d", "h", True, None),  # not listed
+    }
+
+    due = support_programs.seen_refresh_due(stored, ["A", "B", "C", "NEW"], now)
+
+    # Every listed stored row, whatever persist() did with it ("NEW" was upserted with
+    # its own last_seen_at).
+    assert sorted(due) == ["row-a", "row-b"]
 
 
 def test_seen_rows_get_a_fresh_last_seen_at(client):

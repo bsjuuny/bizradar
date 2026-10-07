@@ -86,13 +86,13 @@ export function parseSupportField(value: string | null | undefined): SupportFiel
 export function formatSupportDeadline(
   applicationEnd: string | null | undefined,
   periodText: string | null | undefined,
-  isOpen: boolean,
+  isOpen: boolean | null,
   now: Date = new Date(),
 ): string {
   // is_open (the SQL function) decides, the same as the list filter and the
   // detail page's 모집상태: a posting that isn't open must not read as open - "예산
   // 소진시까지" or a future D-N would suggest it still takes applications.
-  if (!isOpen) return "마감";
+  if (isOpen === false) return "마감";
   if (applicationEnd) return formatDday(applicationEnd, now);
   const text = periodText?.trim();
   return text ? text : formatDday(null, now);

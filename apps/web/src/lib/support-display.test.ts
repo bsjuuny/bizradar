@@ -50,6 +50,11 @@ describe("formatSupportDeadline", () => {
     expect(formatSupportDeadline(null, "예산 소진시까지", false, NOW)).toBe("마감");
     expect(formatSupportDeadline("2026-10-20T00:00:00+00:00", null, false, NOW)).toBe("마감");
   });
+
+  it("never says 마감 when the status is unknown (null)", () => {
+    expect(formatSupportDeadline(null, null, null, NOW)).toBe("일정 미정");
+    expect(formatSupportDeadline(null, "상시 접수", null, NOW)).toBe("상시 접수");
+  });
 });
 
 describe("parseSupportStatus", () => {

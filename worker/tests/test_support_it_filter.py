@@ -155,3 +155,10 @@ def test_ai_fused_into_a_latin_word():
     assert is_it_related("GenAI 해커톤")
     assert is_it_related("OpenAI 해커톤")
     assert not is_it_related("MAIN STREET 해커톤")
+
+
+def test_ict_inside_a_latin_word_does_not_keep_a_funding_parenthetical():
+    # "District" contains "ict": the funding project must still be dropped, so its "AI"
+    # doesn't make a non-IT program IT.
+    assert not is_it_related("의료기기 부품 국산화 지원사업 공고(AI District 조성사업)")
+    assert is_it_related("지역선도기업 지원 공고(ICT 혁신기업 육성사업)")

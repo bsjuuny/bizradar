@@ -130,6 +130,17 @@ def test_extract_items_unknown_schema_raises():
         # year. It stays text.
         ("2026. 10. 20. ~ 10. 2.", None),
         ("2026. 3. 1. ~ 2. 28.", None),
+        # Variants not in the stored data but cheap to accept: a full-width tilde, an hour
+        # written "18시", a trailing remark.
+        ("2026-10-01 ～ 2026-10-31", (date(2026, 10, 1), date(2026, 10, 31))),
+        ("2026-10-01(수) ~ 2026-10-31(금) 18시", (date(2026, 10, 1), date(2026, 10, 31))),
+        (
+            "2026-10-01 ~ 2026-10-31 (예산 소진 시 조기마감)",
+            (date(2026, 10, 1), date(2026, 10, 31)),
+        ),
+        # Still never a second range or free text after the end.
+        ("2026-10-01 ~ 2026-10-31, 2026-11-01 ~ 2026-11-30", None),
+        ("2026-10-01 ~ 2026-10-31 중 별도 공지", None),
     ],
 )
 def test_parse_period_reads_only_real_date_ranges(raw, expected):
@@ -416,7 +427,7 @@ def test_run_persists_every_record_through_repository(monkeypatch):
     assert result.persisted == 5
     assert result.failed == 0
     assert [p.external_id for p in persisted][0] == "PBLN_000000000127023"
-    assert collector.unchanged_ids == []
+    assert collector.unchanged == 0
 
 
 def test_unchanged_rows_are_not_resent(monkeypatch):
@@ -438,7 +449,7 @@ def test_unchanged_rows_are_not_resent(monkeypatch):
     result = collector.run()
 
     assert result.persisted == 5 and result.failed == 0
-    assert collector.unchanged_ids == ["row-1"]  # the job marks these as seen
+    assert collector.unchanged == 1
     assert first.external_id not in [p.external_id for p in persisted]
     assert len(persisted) == 4
 

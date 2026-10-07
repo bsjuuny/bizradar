@@ -76,9 +76,12 @@ SEOUL = ZoneInfo("Asia/Seoul")
 # 않는다(K-Startup 제목의 "[한국도로공사]" 같은 기관명 태그와 구별하려는 것).
 _REGION_TAG = re.compile(r"^\s*\[([^\]]+)\]")
 # One date of a 신청기간 range: 2026-10-01, 2026.10.1., 2026. 10. 2., 2026/10/01 or
-# 20261001, optionally followed by a weekday "(목)" and a time "18:00". The end date may
-# leave out its year ("2026. 10. 2. ~ 10. 16.") - it then takes the start's year.
-_DATE_SUFFIX = r"(?:\s*\([월화수목금토일]\))?(?:\s*\d{1,2}:\d{2})?"
+# 20261001, optionally followed by a weekday "(목)" and a time "18:00" / "18시". The end
+# date may leave out its year ("2026. 10. 2. ~ 10. 16.") - it then takes the start's year.
+# The range may use a full-width tilde and end with a remark in parentheses ("(예산 소진 시
+# 조기마감)"). None of these variants was in the 1,473 stored texts of 2026-10-08; they
+# are cheap to accept, and a range that doesn't parse loses its D-day.
+_DATE_SUFFIX = r"(?:\s*\([월화수목금토일]\))?(?:\s*\d{1,2}(?::\d{2}|\s*시))?"
 _START_DATE = (
     r"(?:(?P<y1>\d{4})[.\-/]\s*(?P<m1>\d{1,2})[.\-/]\s*(?P<d1>\d{1,2})\.?"
     r"|(?P<y1c>\d{4})(?P<m1c>\d{2})(?P<d1c>\d{2}))"
@@ -91,7 +94,8 @@ _END_DATE = (
 # long - a real cross-year 신청기간 is weeks or a few months ("12. 1. ~ 1. 15.").
 _MAX_ROLLED_OVER_DAYS = 183
 _PERIOD = re.compile(
-    rf"^\s*{_START_DATE}{_DATE_SUFFIX}\s*~\s*{_END_DATE}{_DATE_SUFFIX}\s*(?:까지)?\s*$"
+    rf"^\s*{_START_DATE}{_DATE_SUFFIX}\s*[~～〜]\s*{_END_DATE}{_DATE_SUFFIX}\s*(?:까지)?"
+    r"(?:\s*\([^()]*\))?\s*$"
 )
 # Line breaks: <br> (any attributes) and the end of block elements. Table cells end with
 # a space so "<td>지원대상</td><td>중소기업</td>" doesn't read "지원대상중소기업". Other
@@ -108,6 +112,7 @@ class StoredRow(NamedTuple):
     id: str
     content_hash: str
     recruiting: bool | None
+    last_seen_at: datetime | None = None
 
 
 class BizInfoNormalizedProgram(BaseModel):
@@ -288,9 +293,8 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         # external_id -> StoredRow, read by the job before the run; rows that match are not
         # re-sent (see persist()). None: unknown, so every row is written.
         self._stored = stored
-        # Ids of the stored rows persist() skipped as unchanged - still listed, so the job
-        # records them as seen (last_seen_at) without rewriting them.
-        self.unchanged_ids: list[str] = []
+        # How many rows persist() skipped as unchanged this run.
+        self.unchanged = 0
 
     def __enter__(self) -> BizInfoCollector:
         return self
@@ -363,7 +367,7 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
     def collect(self) -> Iterable[RawRecord]:
         self.listed_ids = set()
         self.complete = False
-        self.unchanged_ids = []
+        self.unchanged = 0
         items = self._fetch()
         total = _total_count(items[0]) if items else None
 
@@ -458,8 +462,9 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
     def persist(self, normalized: BizInfoNormalizedProgram) -> None:
         """Skips the upsert when the stored row has the same content_hash and recruiting
         state - every open posting is in every hourly response, and nearly all of them are
-        unchanged. That turns ~1,450 single-row requests per run into a handful, and keeps
-        updated_at meaning "changed". content_hash includes the derived columns (see
+        unchanged. That turns ~1,450 single-row requests per run into a handful (the job
+        refreshes their last_seen_at in bulk, at most daily). content_hash includes the
+        derived columns (see
         normalize()), so collector/rule changes still reach every listed row; closed rows
         that are never re-sent need worker/jobs/support_reclassify.py."""
         from worker.repositories.support_programs import upsert_bizinfo_program
@@ -470,6 +475,6 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
             and stored.content_hash == normalized.content_hash
             and stored.recruiting == normalized.recruiting
         ):
-            self.unchanged_ids.append(stored.id)
+            self.unchanged += 1
             return
         upsert_bizinfo_program(normalized)

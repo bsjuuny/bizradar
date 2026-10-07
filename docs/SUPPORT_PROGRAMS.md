@@ -65,13 +65,16 @@ matched with the rule in "Dedupe" below.
   recruiting)` once per run - for rows still recruiting or seen in the last 3 days, not the
   ever-growing closed history - and hands it to the collector (if that read fails, every
   row is written) and to the closing step. A posting that matches is skipped - nearly all
-  of the ~1,450 are, every hour - and only its `last_seen_at` is refreshed, in chunks of
-  100 (see "`recruiting`" below). `content_hash` covers the stable payload *and*
+  of the ~1,450 are, every hour. Listed rows get their `last_seen_at` refreshed in chunks
+  of 100 once it is a day old (not hourly: every update also bumps `updated_at` and leaves
+  a dead tuple), whatever `persist()` did with them - a row whose upsert keeps failing is
+  still listed. `content_hash` covers the stable payload *and*
   every derived column except `recruiting`, so a change to `normalize()` or to a rule
   reaches every listed row on the next run; only closed rows (never re-sent) need
   reclassify. The job logs `written` (actually sent) next to `persisted` (accepted,
   including the skipped `unchanged`).
-- Scheduled at a 35-minute offset from the top-of-the-hour job group, to spread load. At
+- Scheduled at :35 every hour (a cron trigger, so a worker restart doesn't push it back),
+  away from the top-of-the-hour job group, to spread load. At
   :08 alongside the others, 26-30 of ~1,450 upserts per run failed with the worker's
   long-standing intermittent `WinError 10035`. The fixes for that are writing only changed
   rows (above) and one Supabase client per thread (`get_service_client()` in
@@ -89,7 +92,9 @@ matched with the rule in "Dedupe" below.
   `2026. 10. 2.(목) 09:00`, `2026/10/01`, `20261001`; an end date may omit its year
   (then it takes the start's year, or the next one when it falls before the start - "12.
   1. ~ 1. 15." - but only for a window of up to 183 days: "10. 20. ~ 10. 2." is a typo,
-  not a year-long window, and stays text).
+  not a year-long window, and stays text). Also accepted, though none of the 1,473 stored
+  texts of 2026-10-08 uses them: a full-width tilde, "18시", a trailing remark in
+  parentheses.
   65% of postings (942 of 1,442) say "예산 소진시까지", "상시 접수", "세부사업별 상이" etc.,
   and an open end ("2026-10-01 ~") has no deadline either - those keep null dates, stay
   open until 기업마당 delists them, and the list shows the text instead of "일정 미정".
@@ -152,13 +157,16 @@ visible twice.
 
 The pass runs at the end of every BizInfo job run (`worker/jobs/bizinfo_job.py`) - also
 when collection was skipped (no key) or failed; only a worker without Supabase settings
-skips it. It pairs open 기업마당 rows with open K-Startup rows, and diffs against the marks
-of every 기업마당 row that is recruiting *or* still carries a mark - so a closed copy's
-mark (set while it was open, or by an older rule) is cleared rather than kept forever. It
-writes only rows whose mark changes, one request per distinct value. "Open" on both sides
-is the `is_open` computed column - the single SQL definition of 모집 중, which the web
-filters on too. A K-Startup row collected between BizInfo runs is picked up within the
-hour.
+skips it. It pairs open 기업마당 rows with open K-Startup rows (`plan_duplicate_marks`).
+A pair stays paired after either side closes, as long as the two titles still match
+under the current rule - every marked row is re-checked against its original each run,
+so a rule change clears marks that no longer hold, and a better open original takes a
+mark over. Un-pairing on close would list the program twice under "마감 포함 전체", and
+would bring a date-less copy ("예산 소진시까지") back as 모집 중 once its original's deadline
+passed. It writes only rows whose mark changes, one request per distinct value. "Open"
+is `is_open_on_its_own` for the 기업마당 side (the row's own data - `is_open` would
+already be false for a copy whose original closed) and `is_open` for K-Startup. A
+K-Startup row collected between BizInfo runs is picked up within the hour.
 
 ## Schema - `supabase/migrations/20261007100000_bizinfo_support_programs.sql`
 
@@ -194,7 +202,11 @@ paired copies, orders and pages in one place:
 모집상태, the worker's pairing - is the SQL function `is_open(support_programs)` (a
 PostgREST computed column): the source says recruiting (or doesn't say, and gives a
 deadline), and there is no deadline or it hasn't passed (Asia/Seoul,
-`support_program_today_utc()`). One definition, so they can't drift.
+`support_program_today_utc()`). One definition, so they can't drift. A paired 기업마당 copy
+is also closed when its K-Startup original is - they are the same announcement, and the
+original's deadline is its deadline. With neither a 모집 status nor a deadline the answer
+is NULL (unknown): not in 모집 중, shown as "—" / the 신청기간 text, never as 마감 (no
+such K-Startup row on 2026-10-08, but `_parse_yn` returns None for unknown values).
 
 One more condition, for rows whose source is a list of what is posted right now
 (기업마당): `last_seen_at` must be under 3 days old (see "`last_seen_at`" above) -
