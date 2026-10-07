@@ -9,20 +9,18 @@ The key is BizInfo's own `crtfcKey` (기업마당 > 활용정보 > 정책정보 
 data.go.kr service key. Without a key the API answers HTTP 200 with
 `{"reqErr": "인증키를 입력해주세요."}` (verified live 2026-10-07), not an HTTP error status.
 
-NOT yet verified against a live keyed response - no BIZINFO_API_KEY existed when this was
-written. Two places where the official spec and a third party's live call disagree are
-both accepted rather than guessed between:
-- Envelope: the spec's JSON example is `{"jsonArray": {"item": [...]}}`; a live call
-  elsewhere (2026-09-28) got `{"jsonArray": [...]}` with `totCnt` on every item.
-- 신청기간 (`reqstBeginEndDe`): the spec example is `20220727 ~ 20220930`; the public
-  list page shows `2026-09-01 ~ 2026-10-31`.
-Field names prefer the spec's `pblanc*` names and fall back to its RSS-style aliases
-(`seq`, `author`, `reqstDt`, ...).
+Verified with a real key 2026-10-07 (recorded sample: fixtures/bizinfo/api_response_sample.json):
+the body is `{"jsonArray": [...]}` - the item list itself - with `totCnt` (a number) on
+every item, 1,443 items = totCnt, all `pblanc*` fields present, 신청기간 as
+`YYYY-MM-DD ~ YYYY-MM-DD` or a phrase. The official spec page shows other forms -
+`{"jsonArray": {"item": [...]}}`, `20220727 ~ 20220930`, RSS-style names (`seq`,
+`author`, `reqstDt`) - which are still accepted as fallbacks in case the API drifts back
+to what it documents.
 
-One request returns every currently posted announcement (~1,450 on 2026-10-07), so unlike
-K-Startup there is no pagination. That also makes the response a complete list of what
-is open right now: `listed_ids` / `complete` let the job mark previously collected
-announcements that dropped off the list as no longer recruiting.
+One request returns every currently posted announcement, so unlike K-Startup there is
+no pagination. That also makes the response a complete list of what is open right now:
+`listed_ids` / `complete` let the job mark previously collected announcements that
+dropped off the list as no longer recruiting.
 """
 
 from __future__ import annotations

@@ -1,12 +1,12 @@
 """BizInfoCollector, offline.
 
-`fixtures/bizinfo/api_response_constructed.json` is NOT a recorded API response - no
-BIZINFO_API_KEY existed when the collector was written. Its five items are real
-announcements copied from the public 기업마당 list page on 2026-10-07 (ids, titles,
-신청기간, 소관/수행기관, 지원분야 as shown there), laid out in the field names of the
-official API spec. Fields the list page doesn't show (지원대상, 사업개요) are left out
-rather than invented; tests that need them build a small item inline.
-`api_response_missing_key.json` IS a real response (no crtfcKey, 2026-10-07).
+Both fixtures are real responses recorded 2026-10-07:
+- `api_response_sample.json`: 5 of the 1,443 items a keyed call returned, values
+  untouched except that the contact fields the collector never reads (refrncNm,
+  reqstMthPapersCn, rceptEngnHmpgUrl - phone numbers, e-mail addresses) were removed.
+  `totCnt` is still the full response's 1,443, so this trimmed sample is (correctly) an
+  incomplete list.
+- `api_response_missing_key.json`: the answer to a call without crtfcKey.
 """
 
 import json
@@ -36,7 +36,7 @@ def _settings(api_key: str | None = KEY) -> Settings:
 
 
 def _fixture_text() -> str:
-    return (FIXTURES / "api_response_constructed.json").read_text(encoding="utf-8")
+    return (FIXTURES / "api_response_sample.json").read_text(encoding="utf-8")
 
 
 def _raw(item: dict) -> RawRecord:
@@ -54,10 +54,12 @@ def _collector(handler=None, api_key: str | None = KEY) -> BizInfoCollector:
 
 
 def test_extract_items_live_shape_list():
+    # The shape a keyed call actually returns: jsonArray is the item list itself.
     items = extract_items(_fixture_text())
 
     assert len(items) == 5
     assert items[0]["pblancId"] == "PBLN_000000000127023"
+    assert items[0]["totCnt"] == 1443  # a number, not the string the spec table shows
 
 
 def test_extract_items_official_spec_shape_object_with_item_list():
@@ -150,11 +152,18 @@ def test_normalize_dated_announcement():
     assert normalized.application_start == datetime(2026, 10, 2)
     assert normalized.application_end == datetime(2026, 10, 16)
     assert normalized.application_period_text == "2026-10-02 ~ 2026-10-16"
+    assert normalized.target == "소상공인"
     assert normalized.recruiting is True
     assert normalized.source_url == (
-        "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do"
-        "?pblancId=PBLN_000000000127023"
+        "https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId=PBLN_000000000127023"
     )
+    # bsnsSumryCn is <p>-wrapped HTML with &nbsp; - read as plain lines.
+    assert normalized.description is not None
+    assert normalized.description.startswith(
+        "2026년 10월 동행축제 기간 내 소상공인의 판매촉진 및 홍보를 위하여"
+    )
+    assert "☞ 경기지역 소상공인\n- 사업자등록증 소재지 경기지역" in normalized.description
+    assert "<" not in normalized.description
 
 
 def test_normalize_budget_bound_period_keeps_text_and_stays_recruiting():
@@ -170,10 +179,18 @@ def test_normalize_budget_bound_period_keeps_text_and_stays_recruiting():
     # "기초자치단체" is a placeholder, not an organization name.
     assert normalized.organization == "울산광역시"
     assert normalized.region == "울산"
-    # Relative pblancUrl is made absolute.
-    assert normalized.source_url == (
-        "https://www.bizinfo.go.kr/web/lay1/bbs/S1T122C128/AS/74/view.do"
-        "?pblancId=PBLN_000000000126995"
+
+
+def test_normalize_relative_url_is_made_absolute():
+    # Live responses carry absolute URLs; the spec doesn't promise it.
+    item = {
+        "pblancId": "A",
+        "pblancNm": "x",
+        "pblancUrl": "/sii/siia/selectSIIA200Detail.do?pblancId=A",
+    }
+
+    assert _collector().normalize(_raw(item)).source_url == (
+        "https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId=A"
     )
 
 
@@ -186,7 +203,7 @@ def test_normalize_direct_execution_uses_jurisdiction_and_no_region():
     assert normalized.region is None
 
 
-def test_normalize_flags_investment_linked_from_title():
+def test_normalize_flags_investment_linked():
     items = extract_items(_fixture_text())
 
     flags = [_collector().normalize(_raw(item)).investment_linked for item in items]
@@ -246,23 +263,36 @@ def test_validate_rejects_empty_title():
 
 def test_collect_sends_key_and_reports_complete_list():
     seen = {}
+    body = {
+        "jsonArray": [
+            {"pblancId": "A", "pblancNm": "a", "totCnt": 2},
+            {"pblancId": "B", "pblancNm": "b", "totCnt": 2},
+        ]
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["params"] = dict(request.url.params)
-        return httpx.Response(200, text=_fixture_text())
+        return httpx.Response(200, json=body)
 
     collector = _collector(handler)
 
     records = list(collector.collect())
 
     assert seen["params"] == {"crtfcKey": KEY, "dataType": "json", "searchCnt": "5000"}
-    assert len(records) == 5
-    assert collector.listed_ids == {r.external_id for r in records}
+    assert collector.listed_ids == {"A", "B"} == {r.external_id for r in records}
     assert collector.complete is True
 
 
+def test_collect_trimmed_recorded_sample_is_not_complete():
+    # 5 items whose totCnt still says 1,443 - exactly what a truncated response looks like.
+    collector = _collector(lambda request: httpx.Response(200, text=_fixture_text()))
+
+    assert len(list(collector.collect())) == 5
+    assert collector.complete is False
+
+
 def test_collect_truncated_response_is_not_complete():
-    body = {"jsonArray": [{"pblancId": "A", "pblancNm": "a", "totCnt": "1500"}]}
+    body = {"jsonArray": [{"pblancId": "A", "pblancNm": "a", "totCnt": 1500}]}
     collector = _collector(lambda request: httpx.Response(200, json=body))
 
     records = list(collector.collect())

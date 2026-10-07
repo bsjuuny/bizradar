@@ -2,8 +2,8 @@
 
 Phase 6 remainder (2026-10-07). K-Startup collection is described in
 `docs/DATA_PIPELINE.md#support-programs-k-startup-implemented-2026-08-10`; this file covers
-what was added on top of it. Status: **code, tests and migration written; not yet live** -
-see "Turning it on" at the bottom.
+what was added on top of it. Status: **code, tests and migration written, API verified with
+a real key; not yet deployed** - see "Turning it on" at the bottom.
 
 ## Source decision (measured 2026-10-07)
 
@@ -43,12 +43,15 @@ matched with the rule in "Dedupe" below.
 - Key: `BIZINFO_API_KEY`, BizInfo's own `crtfcKey` (기업마당 > 활용정보 > 정책정보 개방 >
   지원사업정보 API > 사용신청). A data.go.kr key does not work. Without a key the API
   answers HTTP 200 `{"reqErr": "인증키를 입력해주세요."}` (verified live) - parsed as an error.
-- **Not verified against a live keyed response yet.** Where the official spec and a
-  third party's live call disagree, both forms are accepted:
-  envelope `{"jsonArray": [...]}` vs `{"jsonArray": {"item": [...]}}`; 신청기간
-  `2026-09-01 ~ 2026-10-31` vs `20220727 ~ 20220930`. Field names prefer the spec's
-  `pblanc*` names with its RSS aliases as fallback. First live run: check the log line
-  `bizinfo job finished` (`collected`, `complete`) and a few rows in `/support`.
+- **Verified with a real key 2026-10-07** (read-only call, nothing written):
+  `{"jsonArray": [...]}` with 1,443 items = `totCnt` (a number, on every item), so the
+  response counts as complete; every item has `pblancId`/`pblancNm`/`pblancUrl`
+  (absolute, already the `/sii/siia/selectSIIA200Detail.do` form)/기관/지원분야/
+  `trgetNm`/`bsnsSumryCn` (HTML); 신청기간 is `YYYY-MM-DD ~ YYYY-MM-DD` (502) or a phrase.
+  All 1,443 normalize and validate; 991 get a region, 49 are flagged investment-linked.
+  The official spec page shows other forms (`{"jsonArray": {"item": [...]}}`,
+  `20220727 ~ 20220930`, RSS-style names) - still accepted as fallbacks. Recorded sample:
+  `fixtures/bizinfo/api_response_sample.json` (5 items, contact fields removed).
 - The key is in the query string and httpx error messages quote the URL, so the collector
   masks the key in every error it raises or logs.
 - Mapping: `organization` = 수행기관 unless it is the placeholder "직접수행"/"기초자치단체",
@@ -116,3 +119,9 @@ and "기업마당 원문 보기" link.
 3. Put the key in the vault and restart the worker:
    `vault.py set BIZINFO_API_KEY --file bizradar/.env.worker`, `pm2 restart bizradar-worker`.
    Until then the job logs `bizinfo job skipped` every hour and touches nothing.
+   The worker runs from this local checkout, not from what is pushed - a restart (or a
+   PC reboot) with the key in the vault but **before step 1** makes every hourly run fail
+   all ~1,450 upserts (source check + missing columns). Nothing is corrupted, but the log
+   fills with errors until the migration is applied.
+4. After the first run: the log line `bizinfo job finished` should show `collected` ~1,450,
+   `failed` 0, `complete` true, followed by `cross-source dedupe finished` (~17 marked).
