@@ -194,12 +194,21 @@ def parse_region(title: str) -> str | None:
     return "·".join(parts)
 
 
+_BIZINFO_HOSTS = ("www.bizinfo.go.kr", "bizinfo.go.kr")
+
+
 def _absolute_url(raw: str, pblanc_id: str) -> str:
+    """The posting's page on 기업마당. source_url becomes the "원문 보기" link, so anything
+    that isn't an http(s) URL on bizinfo.go.kr (a "javascript:" URL, another site) falls
+    back to the detail page built from the id."""
+    fallback = DETAIL_URL.format(pblanc_id=pblanc_id)
     if not raw:
-        return DETAIL_URL.format(pblanc_id=pblanc_id)
+        return fallback
     url = urljoin(SITE_ORIGIN + "/", raw)
     parts = urlsplit(url)
-    if parts.scheme == "http" and parts.hostname in ("www.bizinfo.go.kr", "bizinfo.go.kr"):
+    if parts.scheme not in ("http", "https") or parts.hostname not in _BIZINFO_HOSTS:
+        return fallback
+    if parts.scheme == "http":
         url = "https://" + url[len("http://") :]
     return url
 
@@ -255,6 +264,10 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         # listed" as "no longer recruiting".
         self.listed_ids: set[str] = set()
         self.complete = False
+        # (content_hash, recruiting) of the rows already stored, loaded on the first
+        # persist() of a run; rows that match are not re-sent (see persist()).
+        self._stored: dict[str, tuple[str, bool | None]] | None = None
+        self.unchanged = 0
 
     def __enter__(self) -> BizInfoCollector:
         return self
@@ -327,6 +340,8 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
     def collect(self) -> Iterable[RawRecord]:
         self.listed_ids = set()
         self.complete = False
+        self._stored = None
+        self.unchanged = 0
         items = self._fetch()
         total = _total_count(items[0]) if items else None
 
@@ -401,6 +416,20 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         return bool(normalized.title)
 
     def persist(self, normalized: BizInfoNormalizedProgram) -> None:
-        from worker.repositories.support_programs import upsert_bizinfo_program
+        """Skips the upsert when the stored row has the same content_hash and recruiting
+        state - every open posting is in every hourly response, and nearly all of them are
+        unchanged. That turns ~1,450 single-row requests per run into a handful, and keeps
+        updated_at meaning "changed". Rule changes (it_related etc.) don't move either
+        value; those reach stored rows through worker/jobs/support_reclassify.py."""
+        from worker.repositories.support_programs import (
+            fetch_bizinfo_state,
+            upsert_bizinfo_program,
+        )
 
+        if self._stored is None:
+            self._stored = fetch_bizinfo_state()
+        stored = self._stored.get(normalized.external_id)
+        if stored == (normalized.content_hash, normalized.recruiting):
+            self.unchanged += 1
+            return
         upsert_bizinfo_program(normalized)

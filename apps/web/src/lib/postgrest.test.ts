@@ -5,6 +5,10 @@ describe("escapeLikeTerm", () => {
   it("escapes LIKE wildcards and the escape character itself", () => {
     expect(escapeLikeTerm("100%_a\\b")).toBe("100\\%\\_a\\\\b");
   });
+
+  it("turns '*' (PostgREST's alias for '%') into a single-character wildcard", () => {
+    expect(escapeLikeTerm("R*D")).toBe("R_D");
+  });
 });
 
 describe("quotePostgrestValue", () => {

@@ -79,8 +79,10 @@ export async function getSupportPrograms({
   // TS widens any `+`-concatenated or variable-referenced string to plain `string`,
   // which breaks that inference (`GenericStringError` - same gotcha hit and documented
   // in apps/web/src/lib/opportunities.ts).
+  // support_programs_listing = support_programs + original_open/original_end for 기업마당
+  // copies (supabase/migrations/20261007130000_support_programs_listing.sql).
   let query = supabase
-    .from("support_programs")
+    .from("support_programs_listing")
     .select(
       "id, source, title, organization, supervising_type, category, region, recruiting, investment_linked, it_related, application_end, application_period_text",
       { count: "exact" },
@@ -97,13 +99,12 @@ export async function getSupportPrograms({
 
   // support-display.ts의 SUPPORT_STATUSES 설명 참고. application_end는 날짜만 의미 있는
   // 값(자정)이라 Asia/Seoul 오늘 날짜와 비교한다.
+  const today = seoulDateKey();
+  const closingLimit = seoulDateKey(new Date(), CLOSING_SOON_DAYS);
   if (status !== "all") {
-    const today = seoulDateKey();
     query = query.eq("recruiting", true);
     if (status === "closing") {
-      query = query
-        .gte("application_end", today)
-        .lte("application_end", seoulDateKey(new Date(), CLOSING_SOON_DAYS));
+      query = query.gte("application_end", today).lte("application_end", closingLimit);
     } else {
       // 검색어 조건도 .or()를 쓰지만, 두 or 파라미터는 AND로 묶인다(2026-10-07 실측).
       query = query.or(`application_end.is.null,application_end.gte.${today}`);
@@ -132,14 +133,23 @@ export async function getSupportPrograms({
     query = query.or(ilikeAnyFilter(["title", "organization"], term));
   }
 
-  // 다른 출처에 같은 공고가 있어 워커가 숨긴 행(기업마당 쪽 사본, duplicate_of)은 상태 필터만
-  // 걸린 보기에서만 뺀다. 출처·검색어·IT·투자연계·분야 조건은 두 행이 서로 다르게 통과할 수
-  // 있어서(출처 자체, 기관명·제목 표기, 분류 체계가 다르다) 거기서도 빼면 원본이 조건에서
-  // 떨어질 때 공고가 아예 사라진다. 그런 보기에서는 같은 공고가 두 번 보이는 쪽을 택한다
-  // (2026-10-07 기준 17건). worker/dedupe/support_programs.py, docs/SUPPORT_PROGRAMS.md.
+  // 기업마당 사본(duplicate_of가 있는 행)은 그 원본(K-Startup)이 이 보기에 지금 실제로 보일
+  // 때만 숨긴다 - 원본이 안 보이는데 사본까지 숨기면 공고가 아예 사라진다.
+  // - 상태 필터만 걸린 보기: 원본이 지금 모집 중이면 숨긴다. "7일 안에 마감"이면 원본 마감일도
+  //   그 안이어야 한다. "마감 포함 전체"는 원본이 모집 중이면 어차피 목록에 있다.
+  // - 출처·검색어·IT·투자연계·분야 조건이 있으면 숨기지 않는다. 두 행이 그 조건을 서로 다르게
+  //   통과할 수 있어서다(출처 자체, 기관명·제목 표기, 분류 체계가 다르다). 이런 보기에서는
+  //   같은 공고가 두 번 보이는 쪽을 택한다(2026-10-07 기준 17쌍).
+  // 원본 상태는 조회 시점 값(support_programs_listing.original_open/original_end)이라, 원본이
+  // 마감되면 다음 워커 실행을 기다리지 않고 바로 사본이 보인다.
   const onlyStatusFilter = !term && !itOnly && !investmentOnly && !fieldGroup && !source;
   if (onlyStatusFilter) {
-    query = query.is("duplicate_of", null);
+    query =
+      status === "closing"
+        ? query.or(
+            `duplicate_of.is.null,original_open.is.false,original_end.is.null,original_end.lt.${today},original_end.gt.${closingLimit}`,
+          )
+        : query.or("duplicate_of.is.null,original_open.is.false");
   }
 
   const { data, error, count } = await query;

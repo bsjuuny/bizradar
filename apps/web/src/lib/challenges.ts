@@ -1,6 +1,7 @@
 import "server-only";
 
 import { requireUser } from "@/lib/dal";
+import { escapeLikeTerm } from "@/lib/postgrest";
 import { createClient } from "@/lib/supabase/server";
 
 export const CHALLENGE_PAGE_SIZE = 12;
@@ -148,10 +149,6 @@ export function parseChallengeFilters(params: SearchParams): ChallengeFilters {
     organizer: one(params.organizer).trim().slice(0, 100) || undefined,
     technology: one(params.technology).trim().slice(0, 50) || undefined,
   };
-}
-
-function escapeLikeTerm(term: string): string {
-  return term.replace(/[%_]/g, "\\$&");
 }
 
 const SUMMARY_COLUMNS =

@@ -116,12 +116,22 @@ Implemented (Phase 1):
   collection, default `false`: `investment_linked` (TIPS/엔젤투자/etc) and `it_related`
   (`worker/ai/support_it_filter.py`) - changing either rule needs
   `python -m worker.jobs.support_reclassify`. `duplicate_of` (nullable FK to
-  `support_programs.id`, never itself): set by the worker on a 기업마당 row that repeats an
-  open K-Startup announcement; readers listing programs must filter `duplicate_of is
-  null`. See `docs/SUPPORT_PROGRAMS.md` and
+  `support_programs.id`, never itself): the worker's hourly pairing of a 기업마당 row with
+  the open K-Startup announcement it repeats. It is a pairing, not a "hide" flag - whether
+  the copy is hidden depends on the original's state *now* and on what the reader filters
+  by. See `docs/SUPPORT_PROGRAMS.md` and
   `docs/DATA_PIPELINE.md#support-programs-k-startup-implemented-2026-08-10`. RLS: any
   authenticated user can `select`; only `service_role` writes - same pattern as
   `opportunities`.
+- `support_programs_listing` (view, `security_invoker`) - `support_programs` plus, for a
+  paired copy, `original_open` (the original is recruiting with no deadline or one not yet
+  passed, Asia/Seoul, evaluated at query time) and `original_end`. Readers that list
+  programs hide a copy only when its original is itself in the same result: with a
+  status-only filter, `duplicate_of is null or original_open is false` (plus the original's
+  deadline in range for "closing soon"); with source/search/IT/investment/field filters,
+  not at all - the two rows can pass those differently, and hiding the copy could drop
+  the program. `p.*` is fixed at creation: a migration adding a column to
+  `support_programs` must recreate this view.
 
 Planned (later phases, see `docs/MVP_SCOPE.md`):
 

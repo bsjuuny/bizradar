@@ -31,7 +31,11 @@ export default async function SupportProgramDetailPage({
             </span>
           )}
           <span className="text-xs font-medium tabular-nums text-muted-foreground">
-            {formatSupportDeadline(program.application_end, program.application_period_text)}
+            {formatSupportDeadline(
+              program.application_end,
+              program.application_period_text,
+              program.recruiting,
+            )}
           </span>
           <span className="text-xs text-muted-foreground">
             {supportSourceLabel(program.source)}

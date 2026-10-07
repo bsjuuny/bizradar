@@ -379,6 +379,7 @@ def test_transport_error_message_never_contains_the_key():
 
 def test_run_persists_every_record_through_repository(monkeypatch):
     persisted = []
+    monkeypatch.setattr("worker.repositories.support_programs.fetch_bizinfo_state", dict)
     monkeypatch.setattr(
         "worker.repositories.support_programs.upsert_bizinfo_program", persisted.append
     )
@@ -390,6 +391,43 @@ def test_run_persists_every_record_through_repository(monkeypatch):
     assert result.persisted == 5
     assert result.failed == 0
     assert [p.external_id for p in persisted][0] == "PBLN_000000000127023"
+
+
+def test_unchanged_rows_are_not_resent(monkeypatch):
+    collector = _collector(lambda request: httpx.Response(200, text=_fixture_text()))
+    items = extract_items(_fixture_text())
+    first = collector.normalize(_raw(items[0]))
+    second = collector.normalize(_raw(items[1]))
+    stored = {
+        first.external_id: (first.content_hash, True),  # unchanged -> skipped
+        second.external_id: (second.content_hash, False),  # was closed, listed again -> sent
+        "PBLN_000000000127013": ("an-older-hash", True),  # content changed -> sent
+    }
+    lookups = []
+    monkeypatch.setattr(
+        "worker.repositories.support_programs.fetch_bizinfo_state",
+        lambda: lookups.append(1) or stored,
+    )
+    persisted = []
+    monkeypatch.setattr(
+        "worker.repositories.support_programs.upsert_bizinfo_program", persisted.append
+    )
+
+    result = collector.run()
+
+    assert result.persisted == 5 and result.failed == 0
+    assert collector.unchanged == 1
+    assert first.external_id not in [p.external_id for p in persisted]
+    assert len(persisted) == 4
+    assert lookups == [1]  # stored state is read once per run
+
+
+def test_source_url_must_be_an_http_url_on_bizinfo():
+    for raw in ("javascript:alert(1)", "https://evil.example/view.do?pblancId=A"):
+        item = {"pblancId": "A", "pblancNm": "x", "pblancUrl": raw}
+        assert _collector().normalize(_raw(item)).source_url == (
+            "https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId=A"
+        )
 
 
 def test_missing_total_count_is_not_complete():

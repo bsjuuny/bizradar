@@ -59,6 +59,20 @@ def upsert_bizinfo_program(normalized: BizInfoNormalizedProgram) -> None:
     client.table("support_programs").upsert(row, on_conflict="source,external_id").execute()
 
 
+def fetch_bizinfo_state() -> dict[str, tuple[str, bool | None]]:
+    """external_id -> (content_hash, recruiting) for every stored 기업마당 row."""
+    client = get_service_client()
+    rows = _select_all(
+        lambda: (
+            client.table("support_programs")
+            .select("external_id, content_hash, recruiting")
+            .eq("source", "bizinfo")
+            .order("external_id")
+        )
+    )
+    return {row["external_id"]: (row["content_hash"], row["recruiting"]) for row in rows}
+
+
 def _select_all(build_query: Any) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     start = 0
@@ -142,30 +156,33 @@ def set_duplicate_of(changes: Mapping[str, str | None]) -> None:
         ).execute()
 
 
-# Columns derived from the source payload by the collectors' normalize(), i.e. the ones a
-# rule change can make stale (worker/jobs/support_reclassify.py).
-DERIVED_COLUMNS = (
+# Per source, the columns its collector's normalize() derives from the raw payload, i.e.
+# the ones a rule or text-handling change can make stale (worker/jobs/support_reclassify.py).
+# Never recruiting or the dates: those depend on when the row was collected and, for
+# 기업마당, on the unlisted-closing pass - re-deriving them from an old payload would undo
+# that.
+_SHARED_DERIVED = (
     "title",
     "organization",
     "department",
-    "supervising_type",
     "category",
     "region",
     "target",
     "description",
     "investment_linked",
     "it_related",
+    "source_url",
 )
+DERIVED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "kstartup": (*_SHARED_DERIVED, "supervising_type"),
+    "bizinfo": (*_SHARED_DERIVED, "application_period_text"),
+}
 
 
 def fetch_programs_for_reclassify(source: str) -> list[dict[str, Any]]:
-    """Every row of one source with its derived columns - plus raw_payload for K-Startup,
-    whose normalize() is re-run from it. (BizInfo rows are only re-flagged from their
-    title; their raw payloads are large and not needed.)"""
+    """Every row of one source: its derived columns plus the raw_payload they come from."""
     client = get_service_client()
-    columns = "id, external_id, " + ", ".join(DERIVED_COLUMNS)
-    if source == "kstartup":
-        columns += ", raw_payload"
+    columns = "id, external_id, raw_payload, " + ", ".join(DERIVED_COLUMNS[source])
     return _select_all(
         lambda: client.table("support_programs").select(columns).eq("source", source).order("id")
     )

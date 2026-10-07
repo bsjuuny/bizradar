@@ -70,6 +70,7 @@ def collect() -> None:
             "persisted": result.persisted,
             "failed": result.failed,
             "complete": collector.complete,
+            "unchanged": collector.unchanged,
         },
     )
     if result.errors:

@@ -55,13 +55,22 @@ matched with the rule in "Dedupe" below.
 - The key is in the query string. httpx error messages quote the URL (raw or
   percent-encoded), so the collector masks both forms in every error it raises or logs.
   httpx also logs every request URL at INFO - `worker/logging_config.py` holds httpx and
-  httpcore at WARNING. Before that fix the 12:08 and 13:08 runs on 2026-10-07 wrote the key
-  into the PM2 out log (and the data.go.kr serviceKey has been landing there all along).
+  httpcore at WARNING, and redacts `serviceKey=`/`crtfcKey=` values from every log line it
+  formats (message, extras, tracebacks - httpx's HTTPStatusError text quotes the URL too).
+  Before that fix the 12:08 and 13:08 runs on 2026-10-07 wrote the key into the PM2 out
+  log (and the data.go.kr serviceKey has been landing there all along).
 - Retries (transport errors, 5xx) wait 2 s then 5 s; 4xx is not retried. `content_hash`
   leaves out `inqireCo` (view count) and `totCnt` (list size), which change every fetch.
-- Scheduled at a 35-minute offset from the top-of-the-hour job group: at :08 alongside the
-  others, 26-30 of ~1,450 upserts per run failed with the worker's known intermittent
-  `WinError 10035` (shared Supabase client under concurrency; next run re-upserts them).
+- Only changed rows are written: the stored `(content_hash, recruiting)` is read once per
+  run and a posting that matches is skipped - nearly all of the ~1,450 are, every hour.
+  Rule changes don't show up in either value; they reach stored rows via reclassify.
+- Scheduled at a 35-minute offset from the top-of-the-hour job group. At :08 alongside the
+  others, 26-30 of ~1,450 upserts per run failed with the worker's long-standing
+  intermittent `WinError 10035`. Its likely cause - one process-wide Supabase client
+  shared by concurrent jobs - is fixed too: `get_service_client()` is now one client per
+  thread (`worker/repositories/opportunities.py`).
+- `source_url` must be an http(s) URL on bizinfo.go.kr; anything else falls back to the
+  detail page built from the id (it becomes the "원문 보기" link).
 - Mapping: `organization` = 수행기관 unless it is the placeholder "직접수행"/"기초자치단체",
   then 소관기관; `department` = 소관기관 (the detail page labels it 소관기관 for BizInfo rows);
   `category` = 지원분야 대분류; `region` = the title's leading `[지역]` tag, only when every
@@ -124,13 +133,28 @@ A K-Startup row collected between BizInfo runs is picked up within the hour.
 
 ## Web
 
-`/support`: hides `duplicate_of` rows - only in views filtered by status alone. Source,
-search, IT, investment and 지원분야 filters can be passed by one row of a pair and not the
-other (the source itself, differently worded titles/agency names, different taxonomies), so
-hiding the copy there could drop the program entirely; those views may list it twice
-instead. It shows each row's source under its title, and shows
-신청기간 text when there is no deadline date (`apps/web/src/lib/support-display.ts`).
-Detail page: source-aware labels and "기업마당 원문 보기" link.
+`/support` reads the `support_programs_listing` view
+(`supabase/migrations/20261007130000_support_programs_listing.sql`): every row plus, for a
+paired 기업마당 copy, `original_open` (is the K-Startup original in the 모집 중 view *right
+now*) and `original_end`. A copy is hidden only when its original is itself in the same
+result:
+
+- status-only views: `duplicate_of is null or original_open is false`; for "7일 안에 마감"
+  the original's deadline must also fall in the window, or the copy stays.
+- with a source, search, IT, investment or 지원분야 filter: never hidden. One row of a pair
+  can pass those and the other not (the source itself, differently worded titles and
+  agency names, different taxonomies), so hiding the copy could drop the program; those
+  views may list it twice instead.
+
+Because `original_open` is evaluated at query time, a copy reappears the moment its
+original closes or passes its deadline - not at the next hourly dedupe.
+
+Each row shows its source under the title. The deadline column shows "마감" for a closed
+posting (`recruiting=false`), else the D-day, else the 신청기간 text when there is no
+deadline date, else "일정 미정" (`apps/web/src/lib/support-display.ts`). Detail page:
+source-aware labels and "기업마당 원문 보기" link. Search terms are quoted for PostgREST's
+`or=()` (`apps/web/src/lib/postgrest.ts`); `*`, which PostgREST turns into `%` with no
+escape, becomes the single-character wildcard `_`.
 
 Filters (all plain links / GET params, no client JS - same pattern as `/opportunities`):
 
@@ -180,9 +204,10 @@ python -m worker.jobs.support_reclassify --dry-run
 python -m worker.jobs.support_reclassify
 ```
 
-It re-runs K-Startup's `normalize()` on each stored `raw_payload` and re-derives
-BizInfo's `it_related`/`investment_linked` from the stored title and description, writing
-only columns that changed (never recruiting, dates or `duplicate_of`).
+It re-runs each row's own collector `normalize()` on the stored `raw_payload` (K-Startup
+and 기업마당 alike) and writes only derived columns that changed (`DERIVED_COLUMNS` in
+`worker/repositories/support_programs.py`; never recruiting, dates or `duplicate_of`). It
+loads the shared vault first, like the PM2 entrypoint (`worker/secrets_loader.py`).
 
 Same change set: K-Startup's API HTML-escapes some fields (`&apos;`, `&amp;` - 28 stored
 rows, e.g. category "기술개발(R&amp;D)", seen in its raw_payload, not introduced by us).
@@ -193,7 +218,9 @@ The collector now decodes them; the reclassify run fixes the stored rows.
 1. Apply the migration: `npx supabase db push --dry-run`, then `npx supabase db push`.
    **Before** deploying the web app - it selects the new columns, so `/support` errors
    against the old schema.
-2. Push to `master` (Vercel deploys `apps/web`).
+2. Push to `master` (Vercel deploys `apps/web` - not Railway as AGENTS.md and
+   INFRASTRUCTURE.md still say; the 2026-10-07 pushes show up as Vercel "Production"
+   deployments in the GitHub deployments API).
 3. Put the key in the vault and restart the worker:
    `vault.py set BIZINFO_API_KEY --file bizradar/.env.worker`, `pm2 restart bizradar-worker`.
    Until then the job logs `bizinfo job skipped` every hour and touches nothing.
@@ -204,12 +231,14 @@ The collector now decodes them; the reclassify run fixes the stored rows.
 4. After the first run: the log line `bizinfo job finished` should show `collected` ~1,450,
    `failed` 0, `complete` true, followed by `cross-source dedupe finished` (~17 marked).
 
-Steps 1-4 were done 2026-10-07. The filter change after it (`it_related`,
-`20261007120000_support_programs_it_related.sql`) has the same shape:
+Steps 1-4 were done 2026-10-07. The changes after it (filters, review fixes) add two
+migrations - `20261007120000_support_programs_it_related.sql` and
+`20261007130000_support_programs_listing.sql` - and roll out the same way:
 
-1. `npx supabase db push` - before the web deploy (it selects `it_related`) **and** before
-   any worker restart (the collectors now write `it_related`; against the old schema every
-   upsert fails).
-2. `python -m worker.jobs.support_reclassify` - fills `it_related` and decodes K-Startup
-   entities for existing rows; until then "IT 관련만" shows nothing.
+1. `npx supabase db push` (both) - before the web deploy (it reads the view and
+   `it_related`) **and** before any worker restart (the collectors now write `it_related`;
+   against the old schema every upsert fails).
+2. `python -m worker.jobs.support_reclassify --dry-run`, then without `--dry-run` - fills
+   `it_related` and re-normalizes stored text (K-Startup entities, whitespace); until then
+   "IT 관련만" shows nothing.
 3. Push to `master`, then `pm2 restart bizradar-worker`.

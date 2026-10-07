@@ -3,20 +3,31 @@ bypassed here by design (see docs/DATABASE.md), this is the only writer."""
 
 from __future__ import annotations
 
-from functools import lru_cache
+import threading
 
 from supabase import Client, create_client
 
 from worker.collectors.g2b import G2BNormalizedOpportunity
 from worker.config import get_settings
 
+_thread_local = threading.local()
 
-@lru_cache(maxsize=1)
+
 def get_service_client() -> Client:
-    settings = get_settings()
-    if not settings.supabase_url or not settings.supabase_service_role_key:
-        raise RuntimeError("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not configured")
-    return create_client(settings.supabase_url, settings.supabase_service_role_key)
+    """One client per thread, reused within it. The scheduler runs jobs on a thread pool,
+    and a single process-wide client (the old lru_cache) shared its HTTP connection across
+    concurrent jobs - the likely source of the worker's long-standing intermittent
+    "WinError 10035" (non-blocking socket) failures at the top of the hour, which on
+    2026-10-07 also hit 26-30 BizInfo upserts per run. Pool threads are reused, so the
+    number of clients stays bounded by the pool size."""
+    client: Client | None = getattr(_thread_local, "client", None)
+    if client is None:
+        settings = get_settings()
+        if not settings.supabase_url or not settings.supabase_service_role_key:
+            raise RuntimeError("SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not configured")
+        client = create_client(settings.supabase_url, settings.supabase_service_role_key)
+        _thread_local.client = client
+    return client
 
 
 def upsert_opportunity(normalized: G2BNormalizedOpportunity) -> None:

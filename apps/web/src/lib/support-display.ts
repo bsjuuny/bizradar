@@ -81,8 +81,12 @@ export function parseSupportField(value: string | null | undefined): SupportFiel
 export function formatSupportDeadline(
   applicationEnd: string | null | undefined,
   periodText: string | null | undefined,
+  recruiting: boolean | null | undefined,
   now: Date = new Date(),
 ): string {
+  // A closed posting (기업마당 dropped it, or K-Startup says 모집 마감) must not read as
+  // open: "예산 소진시까지" or a future D-N would suggest it still takes applications.
+  if (recruiting === false) return "마감";
   if (applicationEnd) return formatDday(applicationEnd, now);
   const text = periodText?.trim();
   return text ? text : formatDday(null, now);

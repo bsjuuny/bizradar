@@ -316,7 +316,11 @@ export default async function SupportPage({
                       {item.region ?? "—"}
                     </td>
                     <td className="px-4 py-3 tabular-nums whitespace-nowrap">
-                      {formatSupportDeadline(item.application_end, item.application_period_text)}
+                      {formatSupportDeadline(
+                        item.application_end,
+                        item.application_period_text,
+                        item.recruiting,
+                      )}
                     </td>
                   </tr>
                 ))}

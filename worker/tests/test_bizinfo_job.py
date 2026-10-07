@@ -13,6 +13,7 @@ class FakeCollector:
     def __init__(self, complete: bool = True, listed=("A", "B")):
         self.complete = complete
         self.listed_ids = set(listed)
+        self.unchanged = 0
 
     def __enter__(self):
         return self

@@ -32,18 +32,23 @@ describe("parseSupportSource", () => {
 
 describe("formatSupportDeadline", () => {
   it("uses the D-day when there is a deadline date", () => {
-    expect(formatSupportDeadline("2026-10-16T00:00:00+00:00", "2026-10-02 ~ 2026-10-16", NOW)).toBe(
-      "D-9",
-    );
+    expect(
+      formatSupportDeadline("2026-10-16T00:00:00+00:00", "2026-10-02 ~ 2026-10-16", true, NOW),
+    ).toBe("D-9");
   });
 
   it("shows the source's own wording when the period isn't a date", () => {
-    expect(formatSupportDeadline(null, "예산 소진시까지", NOW)).toBe("예산 소진시까지");
+    expect(formatSupportDeadline(null, "예산 소진시까지", true, NOW)).toBe("예산 소진시까지");
   });
 
   it("falls back to 일정 미정 when there is neither", () => {
-    expect(formatSupportDeadline(null, null, NOW)).toBe("일정 미정");
-    expect(formatSupportDeadline(null, "  ", NOW)).toBe("일정 미정");
+    expect(formatSupportDeadline(null, null, true, NOW)).toBe("일정 미정");
+    expect(formatSupportDeadline(null, "  ", null, NOW)).toBe("일정 미정");
+  });
+
+  it("says 마감 for a closed posting even with an open-ended phrase or a future date", () => {
+    expect(formatSupportDeadline(null, "예산 소진시까지", false, NOW)).toBe("마감");
+    expect(formatSupportDeadline("2026-10-20T00:00:00+00:00", null, false, NOW)).toBe("마감");
   });
 });
 
