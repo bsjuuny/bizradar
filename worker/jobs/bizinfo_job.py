@@ -5,10 +5,11 @@ untouched on failure, since collection only ever upserts.
 
 After a successful collection every listed row has a recent last_seen_at - upserted
 rows set it, and the job refreshes the stored ones that are listed once theirs is a day
-old (support_programs.seen_refresh_due). is_open() in SQL stops counting a
+old (support_programs.seen_refresh_due). is_open() in SQL stops counting a date-less
 기업마당 row as 모집 중 once it has gone 3 days unseen: for the 65% of postings whose
 신청기간 is a phrase ("예산 소진시까지"), leaving the list is the only way they close, and
-pass 1 below can stall (expired key, responses that keep coming back incomplete).
+pass 1 below can stall (expired key, responses that keep coming back incomplete). Dated
+rows close on their date.
 
 Two follow-up passes, each isolated from the other:
 1. close (after a successful collection only): announcements that dropped off 기업마당's
@@ -19,10 +20,11 @@ Two follow-up passes, each isolated from the other:
    기업마당 copy with a K-Startup original that has left the 모집 중 view): 기업마당 rows
    that repeat an open K-Startup announcement get duplicate_of set, so Support Radar
    shows the program once (worker/dedupe/support_programs.py). K-Startup is the row kept:
-   it is the original posting and carries more fields (모집 여부, 지원대상, 지역). A pair
-   stays paired after the original closes (plan_duplicate_marks) - the copy closes with
-   it. Runs here rather than in the K-Startup job because only BizInfo rows are ever
-   hidden; a K-Startup row collected in between is picked up within the hour.
+   it is the original posting and carries more fields (모집 여부, 지원대상, 지역) - unless
+   only the copy is still open. A pair stays paired after either side closes
+   (plan_duplicate_marks); pairing never changes a row's 모집 status. Runs here rather than
+   in the K-Startup job because only BizInfo rows are ever marked; a K-Startup row
+   collected in between is picked up within the hour.
 """
 
 from __future__ import annotations
@@ -113,7 +115,10 @@ def collect() -> None:
     if stored is not None:
         try:
             support_programs.mark_bizinfo_seen(
-                support_programs.seen_refresh_due(stored, collector.listed_ids, started_at)
+                # Rows upserted just now already carry a fresh last_seen_at.
+                support_programs.seen_refresh_due(
+                    stored, collector.listed_ids - collector.written, started_at
+                )
             )
         except Exception:
             logger.exception("bizinfo: recording listed rows as seen failed", extra={"job": JOB})

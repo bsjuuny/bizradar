@@ -166,10 +166,11 @@ def plan_duplicate_marks(
     `hide` rows (open 기업마당 rows) are paired with the best `keep` row (open K-Startup
     rows). An existing mark - (copy, its original) in `marked` - that found no open
     original stays as long as the pair still matches under the current rule: the original
-    closing is no reason to un-pair them. Un-pairing would list the program twice under
-    "마감 포함 전체", and would bring a date-less copy back as 모집 중 after its original's
-    deadline (is_open() closes the copy along with its original). So a mark moves only to
-    a better open original, and is cleared only when the rule no longer matches."""
+    closing is no reason to un-pair them - un-pairing would list the program twice under
+    "마감 포함 전체". A mark only decides which row stands for the pair in a listing
+    (list_support_programs: the original, unless only the copy is open); it never changes
+    either row's 모집 status. So a mark moves only to a better open original, and is
+    cleared only when the rule no longer matches."""
     duplicates = find_duplicates(keep, hide)
     for copy, original in marked:
         if (

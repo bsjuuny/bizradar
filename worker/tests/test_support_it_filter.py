@@ -181,3 +181,6 @@ def test_it_itself_is_an_it_keyword(title):
 def test_it_inside_a_latin_word_is_not():
     assert not is_it_related("2026년 VISIT KOREA 관광 스타트업 모집")
     assert not is_it_related("2026년 SUBMIT 지원사업")
+    # Lower case is the English pronoun.
+    assert not is_it_related("Make it Busan 2026 창업 지원사업")
+    assert not is_it_related("it's your turn 청년창업 지원")

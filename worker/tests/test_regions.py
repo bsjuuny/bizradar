@@ -27,7 +27,18 @@ def test_gwangju_and_jeonnam_do_not_overlap_but_the_merged_label_covers_both():
     assert not covered_provinces("광주") & covered_provinces("전남")
     assert covered_provinces("전남광주") >= {"광주", "전남"}
     assert covered_provinces("전국") == frozenset()
-    assert covered_provinces("[unknown]") == frozenset()
+
+
+def test_unknown_words_are_not_read_as_nationwide():
+    # Next to a known 시·도: a place inside it.
+    assert covered_provinces("경기 성남") == frozenset({"경기"})
+    assert covered_provinces("경기도 성남시") == frozenset({"경기"})
+    # On their own: specific but unreadable - overlaps only the same value.
+    assert covered_provinces("성남") == frozenset({"?성남"})
+    assert not covered_provinces("성남") & covered_provinces("부산")
+    # Still nothing specific.
+    assert covered_provinces("전국") == frozenset()
+    assert covered_provinces(None) == frozenset()
 
 
 def test_official_long_forms_read_as_the_short_word():

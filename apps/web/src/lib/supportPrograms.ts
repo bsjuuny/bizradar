@@ -66,12 +66,12 @@ type ListResult = { total: number; items: SupportProgramSummary[] };
 const MAX_PAGE = 100_000;
 
 /**
- * Filtering, hiding 기업마당 copies whose K-Startup original is in the same result,
+ * Filtering, showing a duplicate pair as one row when both are in the same result,
  * ordering and paging all happen in one SQL function, list_support_programs
  * (supabase/migrations/20261007130000_support_programs_listing.sql, replaced by
- * 20261008100000_support_programs_open_follows_original.sql) - so the rule "hide a
- * copy only when its original is listed too" can't drift from the filters, and "모집 중"
- * has a single definition (the is_open(support_programs) SQL function).
+ * 20261008100000_support_programs_open_status.sql) - so the rule "collapse a pair only
+ * when both rows are listed" can't drift from the filters, and "모집 중" has a single
+ * definition (the is_open(support_programs) SQL function).
  */
 export async function getSupportPrograms(
   options: SupportProgramQuery = {},

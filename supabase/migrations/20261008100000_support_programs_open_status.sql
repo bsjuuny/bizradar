@@ -1,29 +1,38 @@
--- "모집 중"을 다듬는다 (20261007130000의 is_open과 list_support_programs를 바꾼다 - 그 파일은
--- 이미 적용돼서 고치지 않는다).
+-- "모집 중"과 중복 숨김을 다듬는다 (20261007130000의 is_open과 list_support_programs를 바꾼다 -
+-- 그 파일은 이미 적용돼서 고치지 않는다).
 --
--- 1. is_open_on_its_own(support_programs): 그 행의 값만 보고 정한 모집 여부 - 예전 is_open
---    그대로이되, 모집 여부도 마감일도 없으면 NULL(모름)이다. "마감"이라고 단정하지 않는다:
---    화면은 "—"(또는 신청기간 문장)로 보이고, 모집 중 목록에는 들지 않는다.
--- 2. is_open(support_programs): is_open_on_its_own에 더해, 기업마당 사본(duplicate_of)은
---    원본(K-Startup)이 마감이면 함께 마감이다. 같은 공고라고 짝지었으니 원본의 마감일이 그
---    공고의 마감일이다 - "예산 소진시까지"인 사본이 원본 마감 뒤에도 모집 중으로 남지 않게.
---    원본의 모집 여부를 모르면(NULL) 사본은 제 값대로다. 워커는 마감된 짝도 짝으로 둔다
---    (worker/dedupe/support_programs.py plan_duplicate_marks) - 풀어 버리면 "마감 포함
---    전체"에 같은 공고가 두 번 나온다.
+-- 1. is_open(support_programs): 행 자기 값만 본다 - 중복 짝(duplicate_of)은 상태를 바꾸지
+--    않는다. 짝짓기는 제목 유사도로 하는 추정이라, 그게 틀렸을 때 기업마당이 모집 중이라고
+--    올려 둔 공고를 "마감"으로 만들면 안 된다(놓친 기회가 중복 한 줄보다 비싸다).
+--    a. 모집 여부도 마감일도 없으면 NULL(모름) - "마감"이라고 단정하지 않는다. 화면은
+--       "—"(또는 신청기간 문장)로 보이고, 모집 중 목록에는 들지 않는다.
+--    b. "3일 넘게 목록에 없으면 마감"은 날짜 없는 행에만 적용한다. 그 규칙은 마감 처리가
+--       멈췄을 때(키 만료, 계속 불완전한 응답) 날짜로는 영원히 닫히지 않는 공고를 위한
+--       것이고, 날짜가 있는 공고는 날짜로 닫힌다 - 워커 PC가 사흘 꺼져 있었다고 마감일이
+--       몇 주 남은 공고가 "마감"으로 보이면 안 된다.
+-- 2. list_support_programs의 중복 숨김: 짝이 둘 다 결과에 있으면 원본(K-Startup)을 보이고
+--    사본을 숨긴다 - 단, 사본만 모집 중이면 사본을 보이고 원본을 숨긴다. 그래서 어느 보기
+--    (모집 중 / 마감 포함 전체)에서든 짝은 한 줄이고, 그 줄의 상태가 보기마다 다르지 않다.
+--    워커는 마감된 짝도 짝으로 둔다(worker/dedupe/support_programs.py plan_duplicate_marks).
 -- 3. list_support_programs: 모집 여부를 모르는 공고(NULL)는 마감된 공고와 함께 뒤로 간다.
 --    open/closing에서는 is_open을 계산하기 전에 그 필요조건(마감이라고 하지 않았고 마감일이
---    지나지 않음)으로 먼저 거른다 - 정의는 여전히 is_open 하나이고, 이건 마감된 이력(매달
---    ~1,500건씩 쌓인다)에 is_open을 계산하지 않으려는 것뿐이다.
--- 4. 기업마당 행은 last_seen_at이 반드시 있다(check). is_open의 "3일 넘게 목록에 없으면
---    마감"은 NULL을 "추적하지 않음"(K-Startup)으로 건너뛰는데, 기업마당 행이 NULL이면 그
---    규칙을 빠져나간다. 워커는 2026-10-07 배포부터 upsert마다 값을 쓰고, 2026-10-08 실측
---    1,473건 모두 값이 있다.
+--    지나지 않음)으로 먼저 거른다 - 정의는 여전히 is_open 하나이고, 마감된 이력(매달 ~1,500건씩
+--    쌓인다)에 is_open을 계산하지 않으려는 것뿐이다. "마감 포함 전체"는 전체를 센다 - 2026-10-08
+--    기준 ~2,500행이라 요청마다 수 ms이고, 몇 년 동안은 그대로다.
+-- 4. 기업마당 행은 last_seen_at이 반드시 있다(check). is_open은 NULL을 "추적하지 않음"
+--    (K-Startup)으로 건너뛰는데, 기업마당 행이 NULL이면 그 규칙을 빠져나간다. 워커는 2026-10-07
+--    배포부터 upsert마다 값을 쓰고, 2026-10-08 실측 1,473건 모두 값이 있다.
+--
+-- The 3 days must stay well above the worker's refresh interval for last_seen_at
+-- (LAST_SEEN_REFRESH_AFTER in worker/repositories/support_programs.py) -
+-- worker/tests/test_support_programs_repository.py reads this file to check it.
 
 alter table support_programs
   add constraint support_programs_bizinfo_last_seen
   check (source <> 'bizinfo' or last_seen_at is not null);
 
-create function is_open_on_its_own(p support_programs)
+-- create or replace keeps the existing grants/revokes (20261007140000, 20261007150000).
+create or replace function is_open(p support_programs)
   returns boolean
   language sql
   stable
@@ -32,29 +41,10 @@ create function is_open_on_its_own(p support_programs)
       when p.recruiting is null and p.application_end is null then null
       else coalesce(p.recruiting, true)
         and (p.application_end is null or p.application_end >= support_program_today_utc())
-        and (p.last_seen_at is null or p.last_seen_at >= now() - interval '3 days')
-    end
-  $$;
-
--- Same least-privilege surface as the other support_programs functions (20261007140000,
--- 20261007150000): Supabase's default privileges grant EXECUTE on new public functions to
--- PUBLIC and anon.
-revoke execute on function is_open_on_its_own(support_programs) from public;
-revoke execute on function is_open_on_its_own(support_programs) from anon;
-grant execute on function is_open_on_its_own(support_programs) to authenticated, service_role;
-
--- create or replace keeps the existing grants/revokes on is_open and list_support_programs.
-create or replace function is_open(p support_programs)
-  returns boolean
-  language sql
-  stable
-  as $$
-    select case
-      when p.duplicate_of is null then is_open_on_its_own(p)
-      else is_open_on_its_own(p)
-        and coalesce(
-          (select is_open_on_its_own(o) from support_programs o where o.id = p.duplicate_of),
-          true
+        and (
+          p.application_end is not null
+          or p.last_seen_at is null
+          or p.last_seen_at >= now() - interval '3 days'
         )
     end
   $$;
@@ -129,8 +119,23 @@ create or replace function list_support_programs(
       visible as (
         select f.*
         from filtered f
-        where f.duplicate_of is null
-          or not exists (select 1 from filtered o where o.id = f.duplicate_of)
+        -- f is a copy whose original is listed too: the original stands for the pair,
+        -- unless only the copy is open.
+        where not exists (
+            select 1
+            from filtered o
+            where o.id = f.duplicate_of
+              and (o.is_open is true or f.is_open is not true)
+          )
+          -- f is an original with a listed copy that is open while f isn't: the copy
+          -- stands for the pair.
+          and not exists (
+            select 1
+            from filtered c
+            where c.duplicate_of = f.id
+              and c.is_open is true
+              and f.is_open is not true
+          )
       ),
       ordered as (
         select

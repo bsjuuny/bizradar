@@ -62,7 +62,7 @@ matched with the rule in "Dedupe" below.
 - Retries (transport errors, 5xx) wait 2 s then 5 s; 4xx is not retried. `content_hash`
   leaves out `inqireCo` (view count) and `totCnt` (list size), which change every fetch.
 - Only changed rows are written: the job reads the stored `(id, content_hash,
-  recruiting)` once per run - for rows still recruiting or seen in the last 3 days, not the
+  recruiting)` once per run - for rows still recruiting or seen in the last 2 days, not the
   ever-growing closed history - and hands it to the collector (if that read fails, every
   row is written) and to the closing step. A posting that matches is skipped - nearly all
   of the ~1,450 are, every hour. Listed rows get their `last_seen_at` refreshed in chunks
@@ -97,7 +97,8 @@ matched with the rule in "Dedupe" below.
   parentheses.
   65% of postings (942 of 1,442) say "예산 소진시까지", "상시 접수", "세부사업별 상이" etc.,
   and an open end ("2026-10-01 ~") has no deadline either - those keep null dates, stay
-  open until 기업마당 delists them, and the list shows the text instead of "일정 미정".
+  open until 기업마당 delists them (or they go 3 days unseen, see `last_seen_at`), and the
+  list shows the text instead of "일정 미정".
 - `recruiting`: true for everything currently posted unless its end date has passed. After
   a **complete** response the job sets `recruiting=false` on BizInfo rows that are no
   longer listed. Complete means provably whole: `totCnt` present and readable (a number;
@@ -109,9 +110,12 @@ matched with the rule in "Dedupe" below.
   are refreshed by the job), whether or not the response was complete. The closing step
   can stall - an expired key, or responses that keep coming back incomplete - and for the
   65% of postings without a deadline date, leaving the list is the only way they close.
-  So `is_open` stops counting a row as open once it has gone 3 days unseen. Per row: one
+  So `is_open` stops counting a date-less row as open once it has gone 3 days unseen
+  (dated rows close on their date - a worker PC that was off for a long weekend must not
+  turn a posting with weeks to go into 마감). Per row: one
   missing or repeated id in a response affects that posting only. K-Startup rows (and
-  기업마당 rows stored before the column existed) have it null, and the rule skips them.
+  only K-Startup rows have it null (a check constraint requires it on 기업마당 rows), and
+  the rule skips them.
 - Entity decoding (`decode_entities` in `worker/collectors/base.py`) only expands
   `;`-terminated references; `html.unescape` alone also expands legacy forms without `;`
   and turns a URL's `&notice=1` into `¬ice=1`. Named references must be exact HTML5
@@ -162,12 +166,17 @@ skips it. It pairs open 기업마당 rows with open K-Startup rows (`plan_duplic
 A pair stays paired after either side closes, as long as the two titles still match
 under the current rule - every marked row is re-checked against its original each run,
 so a rule change clears marks that no longer hold, and a better open original takes a
-mark over. Un-pairing on close would list the program twice under "마감 포함 전체", and
-would bring a date-less copy ("예산 소진시까지") back as 모집 중 once its original's deadline
-passed. It writes only rows whose mark changes, one request per distinct value. "Open"
-is `is_open_on_its_own` for the 기업마당 side (the row's own data - `is_open` would
-already be false for a copy whose original closed) and `is_open` for K-Startup. A
-K-Startup row collected between BizInfo runs is picked up within the hour.
+mark over. Un-pairing on close would list the program twice under "마감 포함 전체". It
+writes only rows whose mark changes, one request per distinct value. "Open" is `is_open`
+on both sides. A K-Startup row collected between BizInfo runs is picked up within the
+hour.
+
+A pairing never changes either row's 모집 status. It is a fuzzy title match; if it were
+wrong and a copy inherited its original's closing, a program 기업마당 still lists as open
+would read 마감 - and for a radar a missed opportunity costs more than a duplicate line.
+(Tried and reverted on 2026-10-08.) So a date-less copy ("예산 소진시까지") whose K-Startup
+original has passed its deadline stays 모집 중, as 기업마당 itself shows it; the listing
+then shows the copy for the pair (below).
 
 ## Schema - `supabase/migrations/20261007100000_bizinfo_support_programs.sql`
 
@@ -181,7 +190,7 @@ K-Startup row collected between BizInfo runs is picked up within the hour.
 
 `/support` gets its rows from one SQL function, `list_support_programs(...)`
 (`supabase/migrations/20261007130000_support_programs_listing.sql`, replaced by
-`20261008100000_support_programs_open_follows_original.sql`), which filters, hides
+`20261008100000_support_programs_open_status.sql`), which filters, hides
 paired copies, orders and pages in one place:
 
 1. `filtered`: the page's filters (status, IT, investment, 출처, 지원분야, search term)
@@ -189,13 +198,15 @@ paired copies, orders and pages in one place:
    `raw_payload`/`description`). Bad arguments (an unknown status, a page size outside
    1-100, a negative offset or window) raise an error rather than quietly returning
    something else - any signed-in user can call the RPC directly.
-2. `visible`: a 기업마당 copy is dropped only if its original is *in `filtered`* -
-   `not exists (select 1 from filtered o where o.id = f.duplicate_of)`. That is the rule
-   itself, not an approximation: NULL columns on the original, or filters added later,
-   can't make a program vanish (an earlier version re-applied each filter to copied
-   `original_*` columns by hand, and a NULL there hid the copy with no original listed).
-   With a 출처 filter the original and the copy are never both in `filtered`, so nothing
-   is hidden. Evaluated per query - a copy reappears the moment its original closes.
+2. `visible`: a pair is hidden down to one row only when both of its rows are *in
+   `filtered`* - then the original (K-Startup) stands for it, unless only the copy is
+   open, in which case the copy does. Checked against `filtered` itself, not
+   approximated: NULL columns on the original, or filters added later, can't make a
+   program vanish (an earlier version re-applied each filter to copied `original_*`
+   columns by hand, and a NULL there hid the copy with no original listed). With a 출처
+   filter the two are never both in `filtered`, so nothing is hidden. Evaluated per
+   query: under 모집 중 a copy shows as soon as its original closes, and under "마감 포함
+   전체" the same row - the open one - stands for the pair, so the views agree.
 3. Order: open first; open ones by nearest deadline (no deadline last); closed ones most
    recently closed first.
 4. Search is `strpos(lower(...))`, not LIKE - `%`, `_`, `*` are just characters.
@@ -204,16 +215,14 @@ paired copies, orders and pages in one place:
 모집상태, the worker's pairing - is the SQL function `is_open(support_programs)` (a
 PostgREST computed column): the source says recruiting (or doesn't say, and gives a
 deadline), and there is no deadline or it hasn't passed (Asia/Seoul,
-`support_program_today_utc()`). One definition, so they can't drift. A paired 기업마당 copy
-is also closed when its K-Startup original is - they are the same announcement, and the
-original's deadline is its deadline. With neither a 모집 status nor a deadline the answer
+`support_program_today_utc()`). One definition, so they can't drift. Each row's own data
+only - pairing doesn't enter it (see Dedupe). With neither a 모집 status nor a deadline the answer
 is NULL (unknown): not in 모집 중, shown as "—" / the 신청기간 text, never as 마감 (no
 such K-Startup row on 2026-10-08, but `_parse_yn` returns None for unknown values).
 
-One more condition, for rows whose source is a list of what is posted right now
-(기업마당): `last_seen_at` must be under 3 days old (see "`last_seen_at`" above) -
-otherwise a posting without a deadline date would stay 모집 중 forever whenever the
-closing step stalls.
+One more condition, for date-less rows whose source is a list of what is posted right
+now (기업마당): `last_seen_at` must be under 3 days old (see "`last_seen_at`" above) -
+otherwise such a posting would stay 모집 중 forever whenever the closing step stalls.
 
 The 7-day "곧 마감" window: `CLOSING_SOON_DAYS` in `support-display.ts` is passed to the
 function as `p_closing_days` and also labels the chip, so the label and the filter come
@@ -231,7 +240,7 @@ Filters (all plain links / GET params, no client JS - same pattern as `/opportun
 
 | Filter | Param | Meaning |
 | --- | --- | --- |
-| 상태 (default 모집 중) | `status=open\|closing\|all` | open = `is_open`: `recruiting` (or unknown with a deadline) and (no deadline or deadline >= today, Asia/Seoul), and for 기업마당 rows seen in the list within 3 days (see above). The date check is there because K-Startup's own 모집 flag lags its deadline (16 rows on 2026-10-07). closing = open with a deadline within `CLOSING_SOON_DAYS` (7). all = including closed. |
+| 상태 (default 모집 중) | `status=open\|closing\|all` | open = `is_open`: `recruiting` (or unknown with a deadline) and (no deadline or deadline >= today, Asia/Seoul), and for date-less 기업마당 rows seen in the list within 3 days (see above). The date check is there because K-Startup's own 모집 flag lags its deadline (16 rows on 2026-10-07). closing = open with a deadline within `CLOSING_SOON_DAYS` (7). all = including closed. |
 | 출처 | `source=kstartup\|bizinfo` | |
 | IT 관련만 | `it=1` | `it_related` (see "IT filter") |
 | 투자연계형만 | `investment=1` | `investment_linked` |
@@ -277,7 +286,9 @@ python -m worker.jobs.support_reclassify
 
 It re-runs each row's own collector `normalize()` on the stored `raw_payload` (K-Startup
 and 기업마당 alike) and writes only derived columns that changed (`DERIVED_COLUMNS` in
-`worker/repositories/support_programs.py`; never recruiting, dates or `duplicate_of`). It
+`worker/repositories/support_programs.py` - including the application dates, which are
+pure functions of the payload, so a `parse_period` fix reaches stored rows; never
+recruiting, `last_seen_at` or `duplicate_of`). It
 loads the shared vault first, like the PM2 entrypoint (`worker/secrets_loader.py`).
 
 Same change set: K-Startup's API HTML-escapes some fields (`&apos;`, `&amp;` - 28 stored
@@ -308,15 +319,12 @@ Steps 1-4 were done 2026-10-07. The filters and review fixes after it added
 (`20261007140000`, `20261007150000`: EXECUTE revoked from PUBLIC and anon) - all applied
 2026-10-07, reclassify run, pushed and the worker restarted.
 
-`20261008100000_support_programs_open_follows_original.sql` (the copy-follows-original
-`is_open`, `is_open_on_its_own`, the NULL "unknown" status, the 기업마당 `last_seen_at`
-check) rolls out the same way:
+`20261008100000_support_programs_open_status.sql` (the NULL "unknown" status, the 3-day rule for date-less rows only, the
+pair-shows-its-open-row listing, the 기업마당 `last_seen_at` check) rolls out the same way:
 
-1. `npx supabase db push` - before the web deploy **and** before any worker restart: the
-   worker runs from this checkout and its dedupe read selects `is_open_on_its_own`
-   (against the old schema that read fails each hour; collection itself is unaffected).
-   The migration only adds and replaces functions with the same signatures, so applying
-   it under the running worker and web is safe.
+1. `npx supabase db push` - before the web deploy. It only adds a check that every row
+   already satisfies and replaces two functions with the same signatures, so applying it
+   under the running worker and web is safe; the worker needs nothing new from it.
 2. `python -m worker.jobs.support_reclassify --dry-run`, then without `--dry-run` - the
    IT filter now also reads "IT" and 정보기술 (2 K-Startup rows on 2026-10-08).
 3. Push to `master`, then `pm2 restart bizradar-worker`.

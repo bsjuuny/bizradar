@@ -50,7 +50,8 @@ _LATIN = r"(?<![A-Za-z])(?i:{})(?![A-Za-z])"
 _IT_PATTERNS = [
     "소프트웨어",
     # "IT" itself: "JAPAN IT Week", "K-디지털트레이닝(KDT) IT 참여기업" (found 2026-10-08).
-    _LATIN.format("IT"),
+    # Upper case only - lower-case "it" is the English pronoun ("Make it Busan").
+    r"(?<![A-Za-z])IT(?![A-Za-z])",
     "정보기술",
     _LATIN.format(r"S/?W"),
     _LATIN.format("AI"),

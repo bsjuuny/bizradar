@@ -1,4 +1,6 @@
+import re
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -128,3 +130,23 @@ def test_bulk_updates_are_chunked(client):
 
     assert [len(r["in"][1]) for r in client.requests] == [100, 100, 50]
     assert all(r["values"] == {"it_related": True} for r in client.requests)
+
+
+def test_last_seen_intervals_agree_with_the_sql_rule():
+    # is_open() (SQL) closes a date-less 기업마당 row after N days unseen; the worker only
+    # rewrites last_seen_at once it is LAST_SEEN_REFRESH_AFTER old. If N dropped to near
+    # the refresh interval, listed rows would flicker out of 모집 중 between refreshes.
+    # Reads the newest migration that defines is_open, so a later change can't skip this.
+    migrations = sorted(
+        (Path(__file__).resolve().parents[2] / "supabase" / "migrations").glob("*.sql")
+    )
+    defining = [m for m in migrations if "function is_open(" in m.read_text(encoding="utf-8")]
+    sql = defining[-1].read_text(encoding="utf-8")
+    body = sql[sql.index("function is_open(") :]
+    days = int(re.search(r"last_seen_at >= now\(\) - interval '(\d+) days'", body).group(1))
+
+    stale_after = timedelta(days=days)
+    hourly_run = timedelta(hours=1)
+    assert stale_after >= 2 * support_programs.LAST_SEEN_REFRESH_AFTER + hourly_run
+    # The state read must include every listed row, refreshed or not yet.
+    assert support_programs.LAST_SEEN_REFRESH_AFTER + hourly_run <= support_programs._STATE_WINDOW

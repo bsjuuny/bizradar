@@ -90,16 +90,25 @@ def has_unreadable_tag(title: str) -> bool:
 
 
 def covered_provinces(region: str | None) -> frozenset[str]:
-    """The 시·도 a region value covers, or an empty set when it isn't specific (전국,
-    비수도권, or any word outside REGION_WORDS)."""
+    """The 시·도 a region value covers; an empty set when it says nothing specific (no
+    value, 전국, 비수도권).
+
+    A word outside the vocabulary is not "nationwide": next to a known 시·도 it is taken
+    as a place inside it ("경기 성남" -> 경기); on its own the value stays specific but
+    unreadable - a set holding just the raw value, which overlaps only the same value, so
+    the dedupe region guard blocks rather than waves through. All 18 K-Startup values of
+    2026-10-08 are in the vocabulary."""
     if not region:
         return frozenset()
     covered: set[str] = set()
+    unknown = False
     for word in split_region(region):
         if word in GROUPS:
             covered |= GROUPS[word]
         elif word in PROVINCES:
             covered.add(word)
-        else:
-            return frozenset()
+        elif word not in NON_SPECIFIC:
+            unknown = True
+    if unknown and not covered:
+        return frozenset({"?" + region.strip()})
     return frozenset(covered)

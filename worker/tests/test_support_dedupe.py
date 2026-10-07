@@ -303,3 +303,10 @@ def test_copy_with_an_unreadable_tag_is_never_hidden():
         "bz-1", "2026년 한국도로공사 상생형 창업ㆍ벤처기업 지원사업 모집 공고", end
     )
     assert find_duplicates([tagged_original], [plain_copy]) == {"bz-1": "ks-1"}
+
+
+def test_unreadable_region_on_the_kept_side_blocks_a_regionless_copy():
+    original = ProgramTitle("ks-9", "2026년 창업보육센터 입주기업 모집", None, "성남")
+    copy = ProgramTitle("bz-9", "2026년 창업보육센터 입주기업 모집 공고", None)
+
+    assert not _same(copy, original)

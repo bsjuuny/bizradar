@@ -23,6 +23,7 @@ class FakeCollector:
         self.listed_ids = set(listed)
         self.stored = stored
         self.unchanged = 1
+        self.written: set[str] = set()
 
     def __enter__(self):
         return self
@@ -237,6 +238,16 @@ def test_seen_marking_failure_does_not_stop_closing(monkeypatch, configured, cap
 
     assert any("as seen failed" in record.message for record in caplog.records)
     assert configured.closed_with == {"A", "B"}
+
+
+def test_rows_written_this_run_are_not_marked_seen_again(monkeypatch, configured):
+    collector = FakeCollector()
+    collector.written = {"A"}  # upserted with its own fresh last_seen_at
+    monkeypatch.setattr(bizinfo_job, "BizInfoCollector", lambda stored: collector)
+
+    bizinfo_job.run()
+
+    assert configured.seen == []
 
 
 def test_a_pair_stays_paired_after_its_original_closes(monkeypatch, configured):

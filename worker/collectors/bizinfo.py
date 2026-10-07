@@ -284,8 +284,10 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         # external_id -> StoredRow, read by the job before the run; rows that match are not
         # re-sent (see persist()). None: unknown, so every row is written.
         self._stored = stored
-        # How many rows persist() skipped as unchanged this run.
+        # How many rows persist() skipped as unchanged this run, and the external ids it
+        # upserted (those carry a fresh last_seen_at already).
         self.unchanged = 0
+        self.written: set[str] = set()
 
     def __enter__(self) -> BizInfoCollector:
         return self
@@ -359,6 +361,7 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         self.listed_ids = set()
         self.complete = False
         self.unchanged = 0
+        self.written = set()
         items = self._fetch()
         total = _total_count(items[0]) if items else None
 
@@ -469,3 +472,4 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
             self.unchanged += 1
             return
         upsert_bizinfo_program(normalized)
+        self.written.add(normalized.external_id)
