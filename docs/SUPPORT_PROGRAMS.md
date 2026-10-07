@@ -134,13 +134,14 @@ same contest listed with different deadlines on the two sites (10-09 vs 10-11) s
 visible twice.
 
 The pass runs at the end of every BizInfo job run (`worker/jobs/bizinfo_job.py`) - also
-when collection was skipped (no key) or failed. It pairs recruiting 기업마당 rows with open
-K-Startup rows, and diffs against the marks of every 기업마당 row that is recruiting *or*
-still carries a mark - so a closed copy's mark (set while it was open, or by an older
-rule) is cleared rather than kept forever. It writes only rows whose mark changes.
-"Open" K-Startup rows are read through the `is_open` computed column - the single SQL
-definition of 모집 중 (`support_program_is_open()`), which the web filters on too.
-A K-Startup row collected between BizInfo runs is picked up within the hour.
+when collection was skipped (no key) or failed; only a worker without Supabase settings
+skips it. It pairs open 기업마당 rows with open K-Startup rows, and diffs against the marks
+of every 기업마당 row that is recruiting *or* still carries a mark - so a closed copy's
+mark (set while it was open, or by an older rule) is cleared rather than kept forever. It
+writes only rows whose mark changes, one request per distinct value. "Open" on both sides
+is the `is_open` computed column - the single SQL definition of 모집 중, which the web
+filters on too. A K-Startup row collected between BizInfo runs is picked up within the
+hour.
 
 ## Schema - `supabase/migrations/20261007100000_bizinfo_support_programs.sql`
 
@@ -173,14 +174,26 @@ paired copies, orders and pages in one place:
 4. Search is `strpos(lower(...))`, not LIKE - `%`, `_`, `*` are just characters.
 
 "모집 중" anywhere - this page, "7일 안에 마감", the deadline column, the detail page's
-모집상태, the worker's pairing - is `is_open`, i.e. `support_program_is_open()`: the source
-says recruiting (or doesn't say, and gives a deadline), and there is no deadline or it
-hasn't passed (Asia/Seoul, `support_program_today_utc()`). One definition, so they can't
-drift. The 7-day window is in the SQL; `CLOSING_SOON_DAYS` in `support-display.ts` is
-only its label.
+모집상태, the worker's pairing - is the SQL function `is_open(support_programs)` (a
+PostgREST computed column): the source says recruiting (or doesn't say, and gives a
+deadline), and there is no deadline or it hasn't passed (Asia/Seoul,
+`support_program_today_utc()`). One definition, so they can't drift.
+
+One more condition, for 기업마당 rows without a deadline date (65% - "예산 소진시까지"):
+nothing but the job's unlisted-closing pass ever closes them, and that pass runs only on
+a provably complete response. If it stops (expired key, responses that keep coming back
+truncated), those rows would stay 모집 중 forever. So each completed pass is recorded in
+`support_source_sync` (`last_complete_at` per source), and `is_open` counts a date-less
+기업마당 row as open only while that is under 3 days old. Rows with a date keep closing
+on their date regardless.
+
+The 7-day "곧 마감" window: `CLOSING_SOON_DAYS` in `support-display.ts` is passed to the
+function as `p_closing_days` and also labels the chip, so the label and the filter come
+from the same constant (the SQL default of 7 is only for direct callers).
 
 A page number past the end (old link, shorter list) shows the last page, and the pager
-reports the page actually shown. Each row shows its source under the title. The deadline
+reports the page actually shown. Page numbers are capped at 100,000 so the offset stays
+a valid SQL integer. Each row shows its source under the title. The deadline
 column wraps (it can hold long 신청기간 text) and shows "마감" when the posting isn't open,
 else the D-day, else the 신청기간 text when there is no deadline date, else "일정 미정"
 (`apps/web/src/lib/support-display.ts`). Detail page: source-aware labels and "기업마당 원문
@@ -190,7 +203,7 @@ Filters (all plain links / GET params, no client JS - same pattern as `/opportun
 
 | Filter | Param | Meaning |
 | --- | --- | --- |
-| 상태 (default 모집 중) | `status=open\|closing\|all` | open = `is_open`: `recruiting` (or unknown with a deadline) and (no deadline or deadline >= today, Asia/Seoul) - `support_program_is_open()` in SQL. The date check is there because K-Startup's own 모집 flag lags its deadline (16 rows on 2026-10-07). closing = open with a deadline within 7 days. all = including closed. |
+| 상태 (default 모집 중) | `status=open\|closing\|all` | open = `is_open`: `recruiting` (or unknown with a deadline) and (no deadline or deadline >= today, Asia/Seoul), and for date-less 기업마당 rows a closing pass within 3 days (see above). The date check is there because K-Startup's own 모집 flag lags its deadline (16 rows on 2026-10-07). closing = open with a deadline within `CLOSING_SOON_DAYS` (7). all = including closed. |
 | 출처 | `source=kstartup\|bizinfo` | |
 | IT 관련만 | `it=1` | `it_related` (see "IT filter") |
 | 투자연계형만 | `investment=1` | `investment_linked` |
@@ -265,9 +278,11 @@ Steps 1-4 were done 2026-10-07. The changes after it (filters, review fixes) add
 migrations - `20261007120000_support_programs_it_related.sql` and
 `20261007130000_support_programs_listing.sql` - and roll out the same way:
 
-1. `npx supabase db push` (both; the second also creates the `support_program_is_open()`
-   function) - before the web deploy (it reads the view and `it_related`) **and** before any worker restart (the collectors now write `it_related`;
-   against the old schema every upsert fails).
+1. `npx supabase db push` (both; the second creates `is_open()`, `list_support_programs()`
+   and `support_source_sync`) - before the web deploy (it calls the function and reads
+   `is_open` and `it_related`) **and** before any worker restart (the collectors now write
+   `it_related`, against the old schema every upsert fails; the job reads `is_open` and
+   writes `support_source_sync`).
 2. `python -m worker.jobs.support_reclassify --dry-run`, then without `--dry-run` - fills
    `it_related` and re-normalizes stored text (K-Startup entities, whitespace); until then
    "IT 관련만" shows nothing.

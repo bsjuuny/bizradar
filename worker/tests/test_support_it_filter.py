@@ -136,3 +136,22 @@ def test_street_light_exception_does_not_eat_security_grade():
     assert is_it_related("공공기관 정보보안등급 컨설팅 지원")
     assert is_it_related("2026년 보안등급 인증 지원")
     assert not is_it_related("가로등ㆍ보안등 교체 지원사업")
+
+
+def test_it_program_parenthetical_is_kept_in_any_case():
+    assert is_it_related("중소기업 지원 공고(ai바우처 지원사업)")
+    assert is_it_related("중소기업 지원 공고(sw 융합 사업)")
+
+
+def test_only_a_parenthetical_ending_in_a_project_name_is_dropped():
+    assert is_it_related("참여기업 모집 공고(AI 솔루션 구축 분야)")  # field marker
+    assert is_it_related("참여기업 모집 공고(AI 사업장 지원 분야)")
+    assert not is_it_related(
+        "의료기기 국산화 지원사업 공고(AI 빅데이터 기반 의료바이오 첨단기기 연구제조센터 구축)"
+    )
+
+
+def test_ai_fused_into_a_latin_word():
+    assert is_it_related("GenAI 해커톤")
+    assert is_it_related("OpenAI 해커톤")
+    assert not is_it_related("MAIN STREET 해커톤")

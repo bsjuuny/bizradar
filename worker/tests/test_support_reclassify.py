@@ -95,12 +95,14 @@ class FakeRepo:
     def __init__(self, kstartup, bizinfo):
         self.rows = {"kstartup": kstartup, "bizinfo": bizinfo}
         self.updates = []
+        self.requests = []
 
     def fetch_programs_for_reclassify(self, source):
         return self.rows[source]
 
-    def update_program(self, row_id, changes):
-        self.updates.append((row_id, dict(changes)))
+    def update_programs(self, row_ids, changes):
+        self.requests.append((list(row_ids), dict(changes)))
+        self.updates.extend((row_id, dict(changes)) for row_id in row_ids)
 
 
 @pytest.fixture
@@ -175,11 +177,34 @@ def test_writes_only_changed_columns_of_changed_rows(repo):
     }
 
 
-def test_never_touches_recruiting_dates_or_duplicate_of(repo):
+def test_never_touches_recruiting_or_duplicate_of(repo):
+    # Both depend on when a row was collected and on the closing/dedupe passes, not on the
+    # payload. (Dates are re-derived: test_dates_are_re_derived_and_compared_as_instants.)
+    for rows in repo.rows.values():
+        for row in rows:
+            row.update(recruiting=False, duplicate_of="some-original")
+
     support_reclassify.run()
 
     touched = {column for _, changes in repo.updates for column in changes}
-    assert not {"recruiting", "application_start", "application_end", "duplicate_of"} & touched
+    assert not {"recruiting", "duplicate_of"} & touched
+
+
+def test_rows_needing_the_same_change_share_one_request(monkeypatch):
+    # The usual shape after a rule change: many rows differ by the same value.
+    rows = [_kstartup_row(), _kstartup_row(id="ks-2", external_id="178950")]
+    fake = FakeRepo(kstartup=rows, bizinfo=[])
+    settings = Settings(_env_file=None)
+    monkeypatch.setattr(support_reclassify, "support_programs", fake)
+    monkeypatch.setattr(
+        support_reclassify, "KStartupCollector", lambda: KStartupCollector(settings=settings)
+    )
+
+    support_reclassify.run()
+
+    assert fake.requests == [
+        (["ks-1", "ks-2"], {"category": "기술개발(R&D)", "it_related": True}),
+    ]
 
 
 def test_dry_run_writes_nothing(repo):

@@ -1,20 +1,23 @@
-"""Scheduled 기업마당(BizInfo) collection job. Skips cleanly until BIZINFO_API_KEY is
-configured. A failure here must not take down the scheduler or other jobs
-(docs/DATA_PIPELINE.md#failure-isolation) - existing support_programs rows are left
+"""Scheduled 기업마당(BizInfo) collection job. Collection skips cleanly until
+BIZINFO_API_KEY is configured. A failure here must not take down the scheduler or other
+jobs (docs/DATA_PIPELINE.md#failure-isolation) - existing support_programs rows are left
 untouched on failure, since collection only ever upserts.
 
 Two follow-up passes, each isolated from the other:
 1. close (after a successful collection only): announcements that dropped off 기업마당's
    list are marked recruiting=false - only when the response was provably the complete
-   list (BizInfoCollector.complete).
-2. dedupe (every run, even when collection was skipped or failed - K-Startup rows keep
-   opening and closing, and a stale duplicate_of would hide a 기업마당 copy whose
-   K-Startup original has left the 모집 중 view): 기업마당 rows that repeat an open
-   K-Startup announcement get duplicate_of set,
-   so Support Radar shows the program once (worker/dedupe/support_programs.py). K-Startup
-   is the row kept: it is the original posting and carries more fields (모집 여부,
-   지원대상, 지역). Runs here rather than in the K-Startup job because only BizInfo rows
-   are ever hidden; a K-Startup row collected in between is picked up within the hour.
+   list (BizInfoCollector.complete). Each such run is recorded in support_source_sync:
+   is_open() in SQL stops counting date-less 기업마당 rows as 모집 중 once this pass
+   hasn't run for 3 days (expired key, persistently truncated responses), since nothing
+   else would ever close them.
+2. dedupe (every run with Supabase configured, even when collection was skipped or failed
+   - K-Startup rows keep opening and closing, and a stale duplicate_of would pair a
+   기업마당 copy with a K-Startup original that has left the 모집 중 view): 기업마당 rows
+   that repeat an open K-Startup announcement get duplicate_of set, so Support Radar
+   shows the program once (worker/dedupe/support_programs.py). K-Startup is the row kept:
+   it is the original posting and carries more fields (모집 여부, 지원대상, 지역). Runs
+   here rather than in the K-Startup job because only BizInfo rows are ever hidden; a
+   K-Startup row collected in between is picked up within the hour.
 """
 
 from __future__ import annotations
@@ -34,6 +37,13 @@ JOB = "bizinfo-collect"
 
 def run() -> None:
     collect()
+    settings = get_settings()
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        logger.info(
+            "bizinfo dedupe skipped - Supabase is not configured",
+            extra={"job": JOB, "status": "skipped"},
+        )
+        return
     try:
         dedupe()
     except Exception:
@@ -84,7 +94,10 @@ def collect() -> None:
 
     if collector.complete:
         try:
-            closed = support_programs.close_unlisted_bizinfo(collector.listed_ids)
+            closed = support_programs.close_unlisted_bizinfo(
+                collector.listed_ids, collector.stored_recruiting
+            )
+            support_programs.mark_source_sync_complete("bizinfo")
             logger.info(
                 "bizinfo: closed unlisted announcements", extra={"job": JOB, "closed": closed}
             )

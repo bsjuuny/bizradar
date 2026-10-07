@@ -13,14 +13,18 @@ normalize()/text handling:
 (from the repo root; it reads the shared vault first, like the PM2 entrypoint).
 
 Each row's own collector re-runs normalize() on the stored raw_payload, so the columns in
-DERIVED_COLUMNS come out exactly as a fresh collection would write them. Only changed
-columns of changed rows are written. Recruiting state, dates and duplicate_of are never
-touched.
+DERIVED_COLUMNS come out exactly as a fresh collection would write them - including the
+application dates, which are pure functions of the payload (a parse_period fix must reach
+stored rows). Only changed columns of changed rows are written; rows needing the same
+change go in one request per chunk. Recruiting state and duplicate_of are never touched:
+they depend on when a row was collected and on the closing/dedupe passes, not on the
+payload.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 from collections import Counter
 from collections.abc import Mapping, Sequence
@@ -77,6 +81,9 @@ def run(dry_run: bool = False) -> Counter[str]:
     }
     changed: Counter[str] = Counter()
     scanned = 0
+    # Rows needing the identical change, written together: after a rule change most rows
+    # differ by the same column value (e.g. {"it_related": true}).
+    groups: dict[str, tuple[dict[str, Any], list[str]]] = {}
     for source, collector in collectors.items():
         columns = support_programs.DERIVED_COLUMNS[source]
         for row in support_programs.fetch_programs_for_reclassify(source):
@@ -86,8 +93,12 @@ def run(dry_run: bool = False) -> Counter[str]:
                 continue
             changed["rows"] += 1
             changed.update(changes.keys())
-            if not dry_run:
-                support_programs.update_program(row["id"], changes)
+            key = json.dumps(changes, sort_keys=True, ensure_ascii=False)
+            groups.setdefault(key, (changes, []))[1].append(row["id"])
+
+    if not dry_run:
+        for changes, row_ids in groups.values():
+            support_programs.update_programs(row_ids, changes)
 
     logger.info(
         "support_reclassify finished",

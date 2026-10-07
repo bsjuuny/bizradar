@@ -124,11 +124,15 @@ Implemented (Phase 1):
   authenticated user can `select`; only `service_role` writes - same pattern as
   `opportunities`.
 - `is_open(support_programs)` - a PostgREST computed column (`select=...,is_open`,
-  `is_open=eq.true`) wrapping `support_program_is_open(recruiting, application_end)`:
-  recruiting - or unknown with a deadline - and no deadline or one not yet passed,
-  Asia/Seoul, evaluated at query time; the only definition of 모집 중. (A computed column
-  rather than a `p.*` view, whose column list would freeze at creation.) Dates are stored
-  as UTC midnight with an explicit offset.
+  `is_open=eq.true`): recruiting - or unknown with a deadline - and no deadline or one not
+  yet passed, Asia/Seoul, evaluated at query time; a 기업마당 row without a deadline date
+  additionally needs that source's closing pass to have run within 3 days
+  (`support_source_sync`). The only definition of 모집 중. (A computed column rather than a
+  `p.*` view, whose column list would freeze at creation.) Dates are stored as UTC
+  midnight with an explicit offset.
+- `support_source_sync` - `source` (PK), `last_complete_at`: when the worker last closed
+  a source's unlisted postings on a complete list (only 기업마당 today). Read by
+  `is_open`; authenticated users can `select`, only `service_role` writes.
 - `list_support_programs(p_status, p_it_only, p_investment_only, p_source, p_categories,
   p_term, p_closing_days, p_limit, p_offset)` (PL/pgSQL, `security invoker`, returns
   `{total, items}`) - the Support Radar list. Filters every row, then drops a paired copy

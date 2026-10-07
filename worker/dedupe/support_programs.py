@@ -41,6 +41,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 
+from worker.regions import covered_provinces
+
 OVERLAP_WITH_SAME_DEADLINE = 0.8
 JACCARD_WITH_SAME_DEADLINE = 0.55
 OVERLAP_WITHOUT_DEADLINE = 0.9
@@ -56,40 +58,6 @@ _NUMBERS = re.compile(r"\d+")
 _THOUSANDS_SEPARATOR = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
 # Apostrophe forms seen before an abbreviated year: ASCII ', curly ‘ ’, full-width ＇.
 _SHORT_YEAR = re.compile(r"['‘’＇](\d{2})(?=\s*년)")
-
-# Region words as both sources write them, expanded to the 시·도 they cover. A pair whose
-# regions are both specific and share no 시·도 is not the same program: generic titles
-# ("2026년 창업보육센터 입주기업 모집") recur in every region. "전국"/"비수도권" and unknown
-# words say nothing specific, so they never block a match.
-_REGION_EXPANSION = {
-    "수도권": {"서울", "인천", "경기"},
-    "충청": {"대전", "세종", "충북", "충남"},
-    "충청권": {"대전", "세종", "충북", "충남"},
-    "호남권": {"광주", "전남", "전북", "전남광주"},
-    "영남권": {"부산", "대구", "울산", "경북", "경남"},
-    # Only the merged label expands. 광주 and 전남 stay themselves: mapping both onto
-    # 전남광주 too would make every 광주/전남 pair "overlap" and the guard useless there.
-    "전남광주": {"전남광주", "전남", "광주"},
-}
-_SPECIFIC_REGIONS = frozenset(
-    {"서울", "부산", "대구", "인천", "광주", "대전", "울산", "세종", "경기", "강원"}
-    | {"충북", "충남", "전북", "전남", "경북", "경남", "제주", "전남광주"}
-)
-
-
-def _region_set(region: str | None) -> frozenset[str]:
-    """The 시·도 a region value covers, or an empty set when it isn't specific."""
-    if not region:
-        return frozenset()
-    covered: set[str] = set()
-    for word in re.split(r"[·ㆍ,/\s]+", region):
-        if word in _REGION_EXPANSION:
-            covered |= _REGION_EXPANSION[word]
-        elif word in _SPECIFIC_REGIONS:
-            covered.add(word)
-        elif word:
-            return frozenset()  # 전국, 비수도권, anything unknown: not specific
-    return frozenset(covered)
 
 
 def _title_numbers(title: str) -> frozenset[str]:
@@ -113,7 +81,7 @@ class ProgramTitle:
     def __post_init__(self) -> None:
         object.__setattr__(self, "bigrams", _bigrams(normalize_title(self.title)))
         object.__setattr__(self, "numbers", _title_numbers(self.title))
-        object.__setattr__(self, "regions", _region_set(self.region))
+        object.__setattr__(self, "regions", covered_provinces(self.region))
 
 
 def normalize_title(title: str) -> str:

@@ -49,6 +49,7 @@ from worker.collectors.base import (
     decode_entities,
 )
 from worker.config import Settings, get_settings
+from worker.regions import REGION_WORDS, split_region
 
 logger = logging.getLogger(__name__)
 
@@ -71,40 +72,9 @@ RETRY_BACKOFF_SECONDS = (2.0, 5.0)
 _VOLATILE_FIELDS = frozenset({"inqireCo", "totCnt"})
 SEOUL = ZoneInfo("Asia/Seoul")
 
-# 공고명 맨 앞 [지역] 표시로 쓰이는 값 - 2026-10-07 공개 목록 1,442건에서 실제로 나온 것들.
-# 여러 지역은 "대구ㆍ경북"처럼 가운뎃점으로 잇는다. 여기 없는 말이 섞인 태그는 지역으로 읽지
+# 공고명 맨 앞 [지역] 표시. worker/regions.py의 어휘에 없는 말이 섞인 태그는 지역으로 읽지
 # 않는다(K-Startup 제목의 "[한국도로공사]" 같은 기관명 태그와 구별하려는 것).
-_REGION_WORDS = frozenset(
-    {
-        "전국",
-        "서울",
-        "부산",
-        "대구",
-        "인천",
-        "광주",
-        "대전",
-        "울산",
-        "세종",
-        "경기",
-        "강원",
-        "충북",
-        "충남",
-        "전북",
-        "전남",
-        "경북",
-        "경남",
-        "제주",
-        "전남광주",
-        "충청",
-        "수도권",
-        "비수도권",
-        "호남권",
-        "영남권",
-        "충청권",
-    }
-)
 _REGION_TAG = re.compile(r"^\s*\[([^\]]+)\]")
-_REGION_SEPARATORS = re.compile(r"\s*[ㆍ·・,/]\s*")
 # One date of a 신청기간 range: 2026-10-01, 2026.10.1., 2026. 10. 2., 2026/10/01 or
 # 20261001, optionally followed by a weekday "(목)" and a time "18:00". The end date may
 # leave out its year ("2026. 10. 2. ~ 10. 16.") - it then takes the start's year.
@@ -220,8 +190,8 @@ def parse_region(title: str) -> str | None:
     match = _REGION_TAG.match(title)
     if not match:
         return None
-    parts = [part for part in _REGION_SEPARATORS.split(match.group(1).strip()) if part]
-    if not parts or any(part not in _REGION_WORDS for part in parts):
+    parts = split_region(match.group(1))
+    if not parts or any(part not in REGION_WORDS for part in parts):
         return None
     return "·".join(parts)
 
@@ -296,9 +266,12 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         # listed" as "no longer recruiting".
         self.listed_ids: set[str] = set()
         self.complete = False
-        # (content_hash, recruiting) of the rows already stored, loaded on the first
-        # persist() of a run; rows that match are not re-sent (see persist()).
-        self._stored: dict[str, tuple[str, bool | None]] | None = None
+        # external_id -> (id, content_hash) of the rows stored as recruiting, loaded on the
+        # first persist() of a run (None until then, or if that read failed); rows that
+        # match are not re-sent (see persist()), and the job reuses it to close unlisted
+        # rows without reading them again.
+        self.stored_recruiting: dict[str, tuple[str, str]] | None = None
+        self._state_loaded = False
         self.unchanged = 0
 
     def __enter__(self) -> BizInfoCollector:
@@ -372,7 +345,8 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
     def collect(self) -> Iterable[RawRecord]:
         self.listed_ids = set()
         self.complete = False
-        self._stored = None
+        self.stored_recruiting = None
+        self._state_loaded = False
         self.unchanged = 0
         items = self._fetch()
         total = _total_count(items[0]) if items else None
@@ -431,7 +405,7 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
             "investment_linked": is_investment_linked(title, description),
             "it_related": is_it_related(title),
             # Explicit UTC midnight, same convention as K-Startup's YYYYMMDD dates (and what
-            # support_program_is_open() compares against).
+            # is_open() in SQL compares against).
             "application_start": datetime.combine(period[0], datetime.min.time(), tzinfo=UTC)
             if period
             else None,
@@ -466,29 +440,29 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         return bool(normalized.title)
 
     def persist(self, normalized: BizInfoNormalizedProgram) -> None:
-        """Skips the upsert when the stored row has the same content_hash and recruiting
-        state - every open posting is in every hourly response, and nearly all of them are
-        unchanged. That turns ~1,450 single-row requests per run into a handful, and keeps
-        updated_at meaning "changed". content_hash includes the derived columns (see
-        normalize()), so collector/rule changes still reach every listed row; closed rows
-        that are never re-sent need worker/jobs/support_reclassify.py."""
+        """Skips the upsert when the row is stored as recruiting with the same content_hash
+        and is still recruiting - every open posting is in every hourly response, and nearly
+        all of them are unchanged. That turns ~1,450 single-row requests per run into a
+        handful, and keeps updated_at meaning "changed". content_hash includes the derived
+        columns (see normalize()), so collector/rule changes still reach every listed row;
+        closed rows that are never re-sent need worker/jobs/support_reclassify.py."""
         from worker.repositories.support_programs import (
-            fetch_bizinfo_state,
+            fetch_recruiting_bizinfo,
             upsert_bizinfo_program,
         )
 
-        if self._stored is None:
+        if not self._state_loaded:
+            # Read once per run, not once per record: on failure, write every row.
+            self._state_loaded = True
             try:
-                self._stored = fetch_bizinfo_state()
+                self.stored_recruiting = fetch_recruiting_bizinfo()
             except Exception:
-                # Read once per run, not once per record: on failure, write every row.
                 logger.warning(
                     "bizinfo: could not read stored state - writing every row this run",
                     exc_info=True,
                 )
-                self._stored = {}
-        stored = self._stored.get(normalized.external_id)
-        if stored == (normalized.content_hash, normalized.recruiting):
+        stored = (self.stored_recruiting or {}).get(normalized.external_id)
+        if normalized.recruiting and stored is not None and stored[1] == normalized.content_hash:
             self.unchanged += 1
             return
         upsert_bizinfo_program(normalized)

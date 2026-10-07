@@ -7,8 +7,8 @@ K-Startup or BizInfo job inserts meanwhile can't make a read skip or repeat a ro
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
-from datetime import date, datetime
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from datetime import UTC, date, datetime
 from typing import Any
 
 from worker.collectors.bizinfo import BizInfoNormalizedProgram
@@ -70,31 +70,49 @@ def _read_all(table: str, columns: str, narrow: Callable[[Any], Any]) -> list[di
     return fetch_all_pages(lambda: narrow(client.table(table).select(columns)), key="id")
 
 
-def fetch_bizinfo_state() -> dict[str, tuple[str, bool | None]]:
-    """external_id -> (content_hash, recruiting) for every stored 기업마당 row."""
+def fetch_recruiting_bizinfo() -> dict[str, tuple[str, str]]:
+    """external_id -> (id, content_hash) for every 기업마당 row stored as recruiting.
+
+    Recruiting rows only: closed postings pile up (~1,500 new listings a month) and a
+    run needs none of them - a listed posting that was closed is written again anyway
+    (it reopens), and only recruiting rows can be closed. So the read stays the size of
+    the open list instead of growing with history."""
     rows = _read_all(
         "support_programs",
-        "id, external_id, content_hash, recruiting",
-        lambda query: query.eq("source", "bizinfo"),
-    )
-    return {row["external_id"]: (row["content_hash"], row["recruiting"]) for row in rows}
-
-
-def close_unlisted_bizinfo(listed_ids: Iterable[str]) -> int:
-    """기업마당 목록에서 내려간 공고를 모집 마감으로 표시한다. Call only with the complete
-    current list (BizInfoCollector.complete) - otherwise a truncated response would close
-    announcements that are still open. Returns how many rows were closed."""
-    listed = set(listed_ids)
-    open_rows = _read_all(
-        "support_programs",
-        "id, external_id",
+        "id, external_id, content_hash",
         lambda query: query.eq("source", "bizinfo").eq("recruiting", True),
     )
-    stale = [row["id"] for row in open_rows if row["external_id"] not in listed]
+    return {row["external_id"]: (row["id"], row["content_hash"]) for row in rows}
+
+
+def close_unlisted_bizinfo(
+    listed_ids: Iterable[str], recruiting: Mapping[str, tuple[str, str]] | None = None
+) -> int:
+    """기업마당 목록에서 내려간 공고를 모집 마감으로 표시한다. Call only with the complete
+    current list (BizInfoCollector.complete) - otherwise a truncated response would close
+    announcements that are still open. `recruiting` is fetch_recruiting_bizinfo() as read
+    at the start of the run (the collector already has it); rows that became recruiting
+    since are all listed, so it is still the full set to check. Read here when not given.
+    Returns how many rows were closed."""
+    if recruiting is None:
+        recruiting = fetch_recruiting_bizinfo()
+    listed = set(listed_ids)
+    stale = [row_id for external_id, (row_id, _) in recruiting.items() if external_id not in listed]
     client = get_service_client()
     for chunk in chunked(stale, _UPDATE_CHUNK_SIZE):
         client.table("support_programs").update({"recruiting": False}).in_("id", chunk).execute()
     return len(stale)
+
+
+def mark_source_sync_complete(source: str) -> None:
+    """Record that `source`'s unlisted-closing pass just ran on a complete list. is_open()
+    stops treating that source's date-less rows as open once this is 3 days old
+    (supabase/migrations/20261007130000_support_programs_listing.sql)."""
+    client = get_service_client()
+    client.table("support_source_sync").upsert(
+        {"source": source, "last_complete_at": datetime.now(UTC).isoformat()},
+        on_conflict="source",
+    ).execute()
 
 
 def _to_date(value: str | None) -> date | None:
@@ -121,27 +139,35 @@ def fetch_open_kstartup_titles() -> list[ProgramTitle]:
 
 
 def fetch_open_bizinfo_titles() -> tuple[list[ProgramTitle], dict[str, str | None]]:
-    """The 기업마당 rows to pair (the recruiting ones) and the current duplicate_of of every
-    기업마당 row that is recruiting *or* still carries a mark. Closed rows are never paired,
-    so including their marks here is what clears them: otherwise a mark set while a row
-    was open - or by an older rule - would stay on it forever after it closed."""
+    """The 기업마당 rows to pair (open by is_open, same as the K-Startup side) and the
+    current duplicate_of of every 기업마당 row that is recruiting *or* still carries a
+    mark. Rows that aren't open are never paired, so including their marks here is what
+    clears them: otherwise a mark set while a row was open - or by an older rule - would
+    stay on it forever after it closed. is_open implies recruiting for 기업마당 (recruiting
+    is never NULL there), so the recruiting-or-marked read covers every candidate."""
     rows = _read_all(
         "support_programs",
-        "id, title, application_end, region, duplicate_of, recruiting",
+        "id, title, application_end, region, duplicate_of, is_open",
         lambda query: query.eq("source", "bizinfo").or_(
             "recruiting.is.true,duplicate_of.not.is.null"
         ),
     )
-    candidates = [_program_title(row) for row in rows if row["recruiting"] is True]
+    candidates = [_program_title(row) for row in rows if row["is_open"] is True]
     return candidates, {row["id"]: row["duplicate_of"] for row in rows}
 
 
 def set_duplicate_of(changes: Mapping[str, str | None]) -> None:
-    client = get_service_client()
+    """One request per distinct value (per chunk) rather than per row: a rule change can
+    clear or set hundreds of marks at once."""
+    by_value: dict[str | None, list[str]] = {}
     for row_id, duplicate_of in changes.items():
-        client.table("support_programs").update({"duplicate_of": duplicate_of}).eq(
-            "id", row_id
-        ).execute()
+        by_value.setdefault(duplicate_of, []).append(row_id)
+    client = get_service_client()
+    for duplicate_of, row_ids in by_value.items():
+        for chunk in chunked(row_ids, _UPDATE_CHUNK_SIZE):
+            client.table("support_programs").update({"duplicate_of": duplicate_of}).in_(
+                "id", chunk
+            ).execute()
 
 
 # Per source, the columns its collector's normalize() derives from the raw payload, i.e.
@@ -181,6 +207,8 @@ def fetch_programs_for_reclassify(source: str) -> list[dict[str, Any]]:
     )
 
 
-def update_program(row_id: str, changes: Mapping[str, Any]) -> None:
+def update_programs(row_ids: Sequence[str], changes: Mapping[str, Any]) -> None:
+    """Write the same `changes` to every row in `row_ids`, a chunk per request."""
     client = get_service_client()
-    client.table("support_programs").update(dict(changes)).eq("id", row_id).execute()
+    for chunk in chunked(row_ids, _UPDATE_CHUNK_SIZE):
+        client.table("support_programs").update(dict(changes)).in_("id", chunk).execute()

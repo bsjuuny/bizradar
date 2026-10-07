@@ -390,7 +390,7 @@ def test_transport_error_message_never_contains_the_key():
 
 def test_run_persists_every_record_through_repository(monkeypatch):
     persisted = []
-    monkeypatch.setattr("worker.repositories.support_programs.fetch_bizinfo_state", dict)
+    monkeypatch.setattr("worker.repositories.support_programs.fetch_recruiting_bizinfo", dict)
     monkeypatch.setattr(
         "worker.repositories.support_programs.upsert_bizinfo_program", persisted.append
     )
@@ -409,14 +409,16 @@ def test_unchanged_rows_are_not_resent(monkeypatch):
     items = extract_items(_fixture_text())
     first = collector.normalize(_raw(items[0]))
     second = collector.normalize(_raw(items[1]))
+    # Only recruiting rows are in the state: second was closed and is listed again, so
+    # it is absent and gets written (reopened).
     stored = {
-        first.external_id: (first.content_hash, True),  # unchanged -> skipped
-        second.external_id: (second.content_hash, False),  # was closed, listed again -> sent
-        "PBLN_000000000127013": ("an-older-hash", True),  # content changed -> sent
+        first.external_id: ("row-1", first.content_hash),  # unchanged -> skipped
+        "PBLN_000000000127013": ("row-3", "an-older-hash"),  # content changed -> sent
     }
+    assert second.external_id not in stored
     lookups = []
     monkeypatch.setattr(
-        "worker.repositories.support_programs.fetch_bizinfo_state",
+        "worker.repositories.support_programs.fetch_recruiting_bizinfo",
         lambda: lookups.append(1) or stored,
     )
     persisted = []
@@ -431,6 +433,32 @@ def test_unchanged_rows_are_not_resent(monkeypatch):
     assert first.external_id not in [p.external_id for p in persisted]
     assert len(persisted) == 4
     assert lookups == [1]  # stored state is read once per run
+    assert collector.stored_recruiting is stored  # handed to the closing pass
+
+
+def test_listed_row_past_its_deadline_is_written_closed(monkeypatch):
+    # Stored as recruiting with the same content, but its end date has passed since: the
+    # skip must not keep it open.
+    item = dict(extract_items(_fixture_text())[0])
+    item["reqstBeginEndDe"] = "20260901 ~ 20260930"
+    collector = _collector(
+        lambda request: httpx.Response(200, text=json.dumps({"jsonArray": [item]}))
+    )
+    normalized = collector.normalize(_raw(item))
+    assert normalized.recruiting is False
+    monkeypatch.setattr(
+        "worker.repositories.support_programs.fetch_recruiting_bizinfo",
+        lambda: {normalized.external_id: ("row-1", normalized.content_hash)},
+    )
+    persisted = []
+    monkeypatch.setattr(
+        "worker.repositories.support_programs.upsert_bizinfo_program", persisted.append
+    )
+
+    collector.run()
+
+    assert [p.recruiting for p in persisted] == [False]
+    assert collector.unchanged == 0
 
 
 def test_source_url_must_be_an_http_url_on_bizinfo():
@@ -578,7 +606,9 @@ def test_state_read_failure_is_tried_once_then_every_row_is_written(monkeypatch)
         calls.append(1)
         raise RuntimeError("db down")
 
-    monkeypatch.setattr("worker.repositories.support_programs.fetch_bizinfo_state", broken_state)
+    monkeypatch.setattr(
+        "worker.repositories.support_programs.fetch_recruiting_bizinfo", broken_state
+    )
     persisted = []
     monkeypatch.setattr(
         "worker.repositories.support_programs.upsert_bizinfo_program", persisted.append
@@ -589,6 +619,8 @@ def test_state_read_failure_is_tried_once_then_every_row_is_written(monkeypatch)
 
     assert calls == [1]
     assert len(persisted) == 5 and result.failed == 0
+    # The closing pass then reads the state itself.
+    assert collector.stored_recruiting is None
 
 
 def test_html_to_text_separates_table_cells_and_br_with_attributes():

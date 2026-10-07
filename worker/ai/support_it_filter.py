@@ -93,19 +93,23 @@ _IT_PATTERNS = [
     _LATIN.format("AIoT"),
     _LATIN.format("ETRI"),
     _LATIN.format(r"chat\s*gpt"),
+    # "AI" fused into a Latin word, which the boundary rule above would miss.
+    _LATIN.format(r"(?:gen|open)\s*ai"),
 ]
 _IT = re.compile("|".join(f"(?:{pattern})" for pattern in _IT_PATTERNS))
 
-# Only a trailing parenthetical that names a funding project or facility build-out is
-# dropped ("...사업", "...구축"); a field marker like "(AI 분야)" or "(AI 사업화 분야)"
-# stays - 사업화/사업자 are not project names. And one that names an IT-industry program is
-# kept even so - "지역선도기업사업화지원 공고(지역디지털기업성장지원사업)" is for IT
-# companies though the main title says nothing about IT.
-_FUNDING_PROJECT = re.compile(r"사업(?![화자])|구축")
+# Only a trailing parenthetical that *ends* in a funding project or build-out name is
+# dropped - "(…연구제조센터 구축사업)", "(…구축)", "(지역특화 제조데이터 활성화 사업)". A field
+# marker such as "(AI 분야)", "(AI 사업화 분야)" or "(AI 솔루션 구축 분야)" ends otherwise and
+# stays. And one that names an IT-industry program is kept even so -
+# "지역선도기업사업화지원 공고(지역디지털기업성장지원사업)" is for IT companies though the
+# main title says nothing about IT.
+_FUNDING_PROJECT = re.compile(r"(?:사업|구축)\s*[)）]\s*$")
 _IT_INDUSTRY_PROGRAM = re.compile(
     r"디지털기업|소프트웨어|정보보호|ICT|(?<![A-Za-z])SW(?![A-Za-z])"
     # IT vouchers fund IT vendors: "(AI바우처 지원사업)", "(데이터바우처 지원사업)".
-    r"|(?:(?<![A-Za-z])AI|데이터|클라우드|SW|소프트웨어|정보보호|보안)\s*바우처"
+    r"|(?:(?<![A-Za-z])AI|데이터|클라우드|SW|소프트웨어|정보보호|보안)\s*바우처",
+    re.IGNORECASE,
 )
 
 # Removed from the title before matching - each a confirmed non-IT hit in the measurement.

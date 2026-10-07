@@ -22,7 +22,7 @@ export type SupportProgramSummary = {
   category: string | null;
   region: string | null;
   recruiting: boolean | null;
-  /** support_program_is_open() - the one definition of 모집 중. */
+  /** is_open(support_programs) in SQL - the one definition of 모집 중. */
   is_open: boolean;
   investment_linked: boolean;
   it_related: boolean;
@@ -59,12 +59,15 @@ export type SupportProgramQuery = {
 
 type ListResult = { total: number; items: SupportProgramSummary[] };
 
+/** Far past any real list (100,000 pages); keeps (page - 1) * pageSize within int4. */
+const MAX_PAGE = 100_000;
+
 /**
  * Filtering, hiding 기업마당 copies whose K-Startup original is in the same result,
  * ordering and paging all happen in one SQL function, list_support_programs
  * (supabase/migrations/20261007130000_support_programs_listing.sql) - so the rule "hide a
  * copy only when its original is listed too" can't drift from the filters, and "모집 중"
- * has a single definition (support_program_is_open).
+ * has a single definition (the is_open(support_programs) SQL function).
  */
 export async function getSupportPrograms(
   options: SupportProgramQuery = {},
@@ -77,8 +80,12 @@ export async function getSupportPrograms(
   )
     ? (options.pageSize as (typeof PAGE_SIZE_OPTIONS)[number])
     : DEFAULT_PAGE_SIZE;
+  // Capped so the offset stays a valid SQL integer - a hand-typed ?page=999999999999 would
+  // otherwise make the RPC fail instead of falling back to the last page below.
   const requestedPage =
-    Number.isFinite(options.page) && (options.page ?? 0) > 0 ? Math.floor(options.page ?? 1) : 1;
+    Number.isFinite(options.page) && (options.page ?? 0) > 0
+      ? Math.min(MAX_PAGE, Math.floor(options.page ?? 1))
+      : 1;
 
   async function fetchPage(page: number): Promise<ListResult> {
     const { data, error } = await supabase.rpc("list_support_programs", {

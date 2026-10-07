@@ -104,7 +104,7 @@ def _parse_date(value: Any) -> datetime | None:
         return None
     try:
         # Explicit UTC midnight: written without an offset, Postgres would read it in the
-        # session TimeZone, and support_program_is_open() compares against UTC midnight.
+        # session TimeZone, and is_open() in SQL compares against UTC midnight.
         return datetime.strptime(str(value), "%Y%m%d").replace(tzinfo=UTC)
     except ValueError:
         logger.warning("kstartup: unrecognized date format", extra={"value": value})
