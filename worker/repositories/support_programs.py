@@ -74,9 +74,9 @@ def _read_all(table: str, columns: str, narrow: Callable[[Any], Any]) -> list[di
 
 # A listed row's last_seen_at is rewritten only once it is this old, so the hourly run
 # doesn't rewrite all ~1,450 rows (each update also bumps updated_at and leaves a dead
-# tuple). is_open() treats a row as gone after 3 days unseen
-# (supabase/migrations/20261007130000_support_programs_listing.sql) - that must stay well
-# above this interval, or listed rows would flicker out between refreshes.
+# tuple). is_open() treats a row as gone after 3 days unseen (is_open_on_its_own in
+# supabase/migrations/20261008100000_support_programs_open_follows_original.sql) - that
+# must stay well above this interval, or listed rows would flicker out between refreshes.
 LAST_SEEN_REFRESH_AFTER = timedelta(days=1)
 # fetch_bizinfo_state's "recently seen": every listed row was refreshed within
 # LAST_SEEN_REFRESH_AFTER (plus a run), so twice that covers them all.
@@ -169,8 +169,9 @@ def _program_title(row: Mapping[str, Any]) -> ProgramTitle:
 def fetch_open_kstartup_titles() -> list[ProgramTitle]:
     """K-Startup rows that are open right now - the is_open computed column, the one
     definition of "모집 중" that the web filters on too
-    (supabase/migrations/20261007130000_support_programs_listing.sql). A 기업마당 copy is
-    paired only with an original the default 모집 중 view would actually show."""
+    (supabase/migrations/20261008100000_support_programs_open_follows_original.sql). A
+    기업마당 copy is paired only with an original the default 모집 중 view would actually
+    show."""
     rows = _read_all(
         "support_programs",
         "id, title, application_end, region",
@@ -188,7 +189,10 @@ def fetch_bizinfo_for_dedupe() -> tuple[
     its original (otherwise a copy whose original closed could never be re-paired). It
     implies recruiting for 기업마당 (recruiting is never NULL there), so the
     recruiting-or-marked read covers every candidate. Marked rows are read whether open
-    or not: plan_duplicate_marks re-checks each against its original."""
+    or not: plan_duplicate_marks re-checks each against its original, so a rule change
+    reaches old pairs too. That set only grows with real duplicates - 17 of ~1,450 open
+    postings on 2026-10-07, so a few hundred a year: one page, and microseconds to
+    re-match."""
     rows = _read_all(
         "support_programs",
         "id, title, application_end, region, duplicate_of, is_open_on_its_own",

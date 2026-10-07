@@ -49,6 +49,9 @@ _LATIN = r"(?<![A-Za-z])(?i:{})(?![A-Za-z])"
 
 _IT_PATTERNS = [
     "소프트웨어",
+    # "IT" itself: "JAPAN IT Week", "K-디지털트레이닝(KDT) IT 참여기업" (found 2026-10-08).
+    _LATIN.format("IT"),
+    "정보기술",
     _LATIN.format(r"S/?W"),
     _LATIN.format("AI"),
     "인공지능",

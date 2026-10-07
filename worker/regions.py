@@ -31,14 +31,62 @@ GROUPS: dict[str, frozenset[str]] = {
 # Valid region words that say nothing specific.
 NON_SPECIFIC = frozenset({"전국", "비수도권"})
 
+# Official long forms, read as the short word. None were among the 2026-10-07 title tags
+# (all short), but they are how a 시·도 is usually spelled out in full.
+ALIASES = {
+    "서울특별시": "서울",
+    "서울시": "서울",
+    "부산광역시": "부산",
+    "대구광역시": "대구",
+    "인천광역시": "인천",
+    "광주광역시": "광주",
+    "대전광역시": "대전",
+    "울산광역시": "울산",
+    "세종특별자치시": "세종",
+    "경기도": "경기",
+    "강원도": "강원",
+    "강원특별자치도": "강원",
+    "충청북도": "충북",
+    "충청남도": "충남",
+    "전라북도": "전북",
+    "전북특별자치도": "전북",
+    "전라남도": "전남",
+    "경상북도": "경북",
+    "경상남도": "경남",
+    "제주도": "제주",
+    "제주특별자치도": "제주",
+}
+
 REGION_WORDS = PROVINCES | GROUPS.keys() | NON_SPECIFIC
 
 # Middle dots, commas, slashes - or just spaces ("[대구 경북]").
 SEPARATORS = re.compile(r"\s*[ㆍ·・,/]\s*|\s+")
 
 
+_LEADING_TAG = re.compile(r"^\s*\[([^\]]+)\]")
+
+
 def split_region(value: str) -> list[str]:
-    return [part for part in SEPARATORS.split(value.strip()) if part]
+    parts = (part for part in SEPARATORS.split(value.strip()) if part)
+    return [ALIASES.get(part, part) for part in parts]
+
+
+def title_tag_region(title: str) -> str | None:
+    """The region named by a title's leading [tag] ("[대구ㆍ경북] ..." -> "대구·경북"), or
+    None when there is no tag or any part of it isn't a region word - "[한국도로공사]" is
+    an organization (K-Startup titles carry those)."""
+    match = _LEADING_TAG.match(title)
+    if not match:
+        return None
+    parts = split_region(match.group(1))
+    if not parts or any(part not in REGION_WORDS for part in parts):
+        return None
+    return "·".join(parts)
+
+
+def has_unreadable_tag(title: str) -> bool:
+    """A leading [tag] that title_tag_region can't read ("[서울 강남구]", "[경기 성남]")."""
+    return _LEADING_TAG.match(title) is not None and title_tag_region(title) is None
 
 
 def covered_provinces(region: str | None) -> frozenset[str]:

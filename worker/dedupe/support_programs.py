@@ -36,6 +36,11 @@ as character-bigram sets:
   so the rule keeps all 17. Two regionless titles still pair. Organization names are not
   used: they differ in 7 of the 17 true pairs (e.g. 수행기관 "창업진흥원" vs K-Startup's
   "중소벤처기업부 장관").
+- a 기업마당 copy whose leading [tag] can't be read as a region ("[경기 성남]") is never
+  hidden: normalize_title drops the tag, so the copy would otherwise compare as
+  region-less and pair with a 전국 K-Startup posting from anywhere. Every tag on the
+  1,473 기업마당 titles of 2026-10-08 was readable; K-Startup's own "[한국도로공사]"-style
+  organization tags are fine on the kept side.
 """
 
 from __future__ import annotations
@@ -45,7 +50,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 
-from worker.regions import covered_provinces
+from worker.regions import covered_provinces, has_unreadable_tag
 
 OVERLAP_WITH_SAME_DEADLINE = 0.8
 JACCARD_WITH_SAME_DEADLINE = 0.55
@@ -81,11 +86,15 @@ class ProgramTitle:
     bigrams: frozenset[str] = field(init=False, compare=False)
     numbers: frozenset[str] = field(init=False, compare=False)
     regions: frozenset[str] = field(init=False, compare=False)
+    # False when the title starts with a [tag] that isn't a readable region (see the module
+    # docstring) - such a row is never hidden as a copy.
+    may_be_hidden: bool = field(init=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "bigrams", _bigrams(normalize_title(self.title)))
         object.__setattr__(self, "numbers", _title_numbers(self.title))
         object.__setattr__(self, "regions", covered_provinces(self.region))
+        object.__setattr__(self, "may_be_hidden", not has_unreadable_tag(self.title))
 
 
 def normalize_title(title: str) -> str:
@@ -134,6 +143,8 @@ def find_duplicates(keep: Iterable[ProgramTitle], hide: Iterable[ProgramTitle]) 
     keep_rows = list(keep)
     duplicates: dict[str, str] = {}
     for candidate in hide:
+        if not candidate.may_be_hidden:
+            continue
         best: tuple[tuple[float, float], str] | None = None
         for original in keep_rows:
             score = match_score(candidate, original)
@@ -161,7 +172,11 @@ def plan_duplicate_marks(
     a better open original, and is cleared only when the rule no longer matches."""
     duplicates = find_duplicates(keep, hide)
     for copy, original in marked:
-        if copy.id not in duplicates and match_score(copy, original) is not None:
+        if (
+            copy.id not in duplicates
+            and copy.may_be_hidden
+            and match_score(copy, original) is not None
+        ):
             duplicates[copy.id] = original.id
     return plan_updates(current, duplicates)
 

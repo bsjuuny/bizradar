@@ -11,17 +11,10 @@
 -- 일부러 채워 넣지 않는다: 채워 두면 새 워커가 돌기 전에 3일이 지나는 순간 기업마당 공고가
 -- 전부 사라진다.
 --
--- is_open_on_its_own(support_programs): 그 행의 값만 보고 정한 모집 여부. 출처가 모집 중이라고
--- 하거나(recruiting) 모집 여부를 모를 때(null)는 마감일이 있으면, 그리고 마감일이 없거나
--- 오늘(서울) 이후이고, 추적하는 행이라면 최근 3일 안에 목록에 있었을 때. 출처가 마감이라고 한
--- 공고(false)는 날짜와 상관없이 마감이다. 모집 여부도 마감일도 없으면 NULL(모름) - "마감"이라고
--- 단정하지 않는다. 화면은 "—"로 보이고, 모집 중 목록에는 들지 않는다.
---
 -- is_open(support_programs): "모집 중"의 유일한 정의이자 PostgREST 계산 컬럼(select=...,is_open,
--- is_open=eq.true). is_open_on_its_own에 더해, 기업마당 사본(duplicate_of)은 원본(K-Startup)이
--- 마감이면 함께 마감이다 - 같은 공고라고 짝지었으니 원본의 마감일이 그 공고의 마감일이다
--- ("예산 소진시까지"인 사본이 원본 마감 뒤에도 모집 중으로 남지 않게). 원본의 모집 여부를
--- 모르면(NULL) 사본은 제 값대로다.
+-- is_open=eq.true). 출처가 모집 중이라고 하거나(recruiting) 모집 여부를 모를 때(null)는 마감일이
+-- 있으면, 그리고 마감일이 없거나 오늘(서울) 이후이고, 추적하는 행이라면 최근 3일 안에 목록에
+-- 있었을 때. 출처가 마감이라고 한 공고(false)는 날짜와 상관없이 마감이다.
 -- 상세 화면, 워커의 중복 짝짓기, list_support_programs가 모두 이 함수만 쓴다. 뷰(p.*)로 내보내면
 -- 뷰를 만들 때의 컬럼 목록으로 고정돼 컬럼을 더할 때마다 다시 만들어야 해서, 계산 컬럼으로 둔다.
 -- application_end는 날짜의 자정(UTC, 수집기가 +00:00을 붙여 저장)이므로, 오늘(서울) 날짜도
@@ -34,8 +27,7 @@
 --      뺀다 - "원본이 같은 결과에 함께 나온다"를 그대로 SQL로 쓴 것이라, 원본 쪽 값이 NULL이든
 --      조건이 몇 개 더 생기든 공고가 사라질 수 없다. duplicate_of는 워커가 매시간 맞추는
 --      짝일 뿐이고, 숨김은 매 조회 시점에 정해진다.
---   3. ordered: 모집 중인 공고가 먼저, 그 안에서는 마감이 가까운 순, 마감된 공고(와 모집 여부를
---      모르는 공고)는 최근 마감 순.
+--   3. ordered: 모집 중인 공고가 먼저, 그 안에서는 마감이 가까운 순, 마감된 공고는 최근 마감 순.
 --      순서는 여기 한 번만 정하고(position), 페이지 자르기와 결과 배열 순서가 모두 그것을 쓴다.
 --   검색어는 strpos(lower(...))로 찾는다 - LIKE 패턴이 아니라서 %, _, * 같은 글자도 그대로
 --   글자로 찾는다. 잘못된 인자(모르는 상태값, 범위 밖 페이지 크기·offset·기간)는 오류로
@@ -53,29 +45,14 @@ create function support_program_today_utc()
     select ((now() at time zone 'Asia/Seoul')::date)::timestamp at time zone 'UTC'
   $$;
 
-create function is_open_on_its_own(p support_programs)
-  returns boolean
-  language sql
-  stable
-  as $$
-    select case
-      when p.recruiting is null and p.application_end is null then null
-      else coalesce(p.recruiting, true)
-        and (p.application_end is null or p.application_end >= support_program_today_utc())
-        and (p.last_seen_at is null or p.last_seen_at >= now() - interval '3 days')
-    end
-  $$;
-
 create function is_open(p support_programs)
   returns boolean
   language sql
   stable
   as $$
-    select is_open_on_its_own(p)
-      and coalesce(
-        (select is_open_on_its_own(o) from support_programs o where o.id = p.duplicate_of),
-        true
-      )
+    select coalesce(p.recruiting, p.application_end is not null)
+      and (p.application_end is null or p.application_end >= support_program_today_utc())
+      and (p.last_seen_at is null or p.last_seen_at >= now() - interval '3 days')
   $$;
 
 create function list_support_programs(
@@ -148,7 +125,7 @@ create function list_support_programs(
           v.*,
           row_number() over (
             order by
-              v.is_open desc nulls last,
+              v.is_open desc,
               case when v.is_open then v.application_end end asc nulls last,
               v.application_end desc nulls last,
               v.id

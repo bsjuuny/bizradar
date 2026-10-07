@@ -49,7 +49,7 @@ from worker.collectors.base import (
     decode_entities,
 )
 from worker.config import Settings, get_settings
-from worker.regions import REGION_WORDS, split_region
+from worker.regions import title_tag_region
 
 logger = logging.getLogger(__name__)
 
@@ -72,9 +72,6 @@ RETRY_BACKOFF_SECONDS = (2.0, 5.0)
 _VOLATILE_FIELDS = frozenset({"inqireCo", "totCnt"})
 SEOUL = ZoneInfo("Asia/Seoul")
 
-# 공고명 맨 앞 [지역] 표시. worker/regions.py의 어휘에 없는 말이 섞인 태그는 지역으로 읽지
-# 않는다(K-Startup 제목의 "[한국도로공사]" 같은 기관명 태그와 구별하려는 것).
-_REGION_TAG = re.compile(r"^\s*\[([^\]]+)\]")
 # One date of a 신청기간 range: 2026-10-01, 2026.10.1., 2026. 10. 2., 2026/10/01 or
 # 20261001, optionally followed by a weekday "(목)" and a time "18:00" / "18시". The end
 # date may leave out its year ("2026. 10. 2. ~ 10. 16.") - it then takes the start's year.
@@ -210,13 +207,7 @@ def parse_period(raw: str) -> tuple[date, date] | None:
 
 
 def parse_region(title: str) -> str | None:
-    match = _REGION_TAG.match(title)
-    if not match:
-        return None
-    parts = split_region(match.group(1))
-    if not parts or any(part not in REGION_WORDS for part in parts):
-        return None
-    return "·".join(parts)
+    return title_tag_region(title)
 
 
 _BIZINFO_HOSTS = ("www.bizinfo.go.kr", "bizinfo.go.kr")

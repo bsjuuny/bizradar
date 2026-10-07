@@ -132,9 +132,9 @@ Implemented (Phase 1):
   its original's - a copy closes with its original. The only definition of 모집 중. (A
   computed column rather than a `p.*` view, whose column list would freeze at creation.)
   Dates are stored as UTC midnight with an explicit offset.
-- `support_programs.last_seen_at` (nullable) - when a 기업마당 posting was last in the
-  hourly list response; null = not tracked (K-Startup, and rows stored before the
-  column). Read by `is_open`; not derived from the payload, so reclassify never touches
+- `support_programs.last_seen_at` - when a 기업마당 posting was last in the hourly list
+  response; required for 기업마당 rows (check constraint), null for K-Startup (not
+  tracked). Read by `is_open`; not derived from the payload, so reclassify never touches
   it.
 - `list_support_programs(p_status, p_it_only, p_investment_only, p_source, p_categories,
   p_term, p_closing_days, p_limit, p_offset)` (PL/pgSQL, `security invoker`, returns

@@ -282,3 +282,24 @@ def test_mark_moves_to_a_better_open_original():
     weaker = ProgramTitle("ks-2", "2026년 서울창업센터 오픈이노베이션 참여기업 모집", None)
     marks = plan_duplicate_marks([KS], [BZ], [(BZ, weaker)], {"bz-1": "ks-2"})
     assert marks == {"bz-1": "ks-1"}
+
+
+def test_copy_with_an_unreadable_tag_is_never_hidden():
+    # "[경기 성남]" isn't a region we can read; without its tag the title would compare as
+    # region-less and pair with a 전국 incubator posting from anywhere.
+    copy = ProgramTitle("bz-9", "[경기 성남] 2026년 창업보육센터 입주기업 모집 공고", None)
+    nationwide = ProgramTitle("ks-9", "2026년 창업보육센터 입주기업 모집", None, "전국")
+
+    assert find_duplicates([nationwide], [copy]) == {}
+    assert plan_duplicate_marks([], [copy], [(copy, nationwide)], {"bz-9": "ks-9"}) == {
+        "bz-9": None
+    }
+    # K-Startup's own organization tags stay fine on the kept side (a real pair, SAME).
+    end = date(2026, 10, 28)
+    tagged_original = ProgramTitle(
+        "ks-1", "[한국도로공사] 2026년 상생형 창업, 벤처기업 지원사업", end
+    )
+    plain_copy = ProgramTitle(
+        "bz-1", "2026년 한국도로공사 상생형 창업ㆍ벤처기업 지원사업 모집 공고", end
+    )
+    assert find_duplicates([tagged_original], [plain_copy]) == {"bz-1": "ks-1"}

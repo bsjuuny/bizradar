@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from zoneinfo import ZoneInfo
 
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
@@ -31,7 +30,6 @@ from worker.logging_config import configure_logging  # noqa: E402
 
 configure_logging()
 logger = logging.getLogger("bizradar.worker")
-SEOUL = ZoneInfo("Asia/Seoul")
 
 
 def build_scheduler() -> BlockingScheduler:
@@ -57,12 +55,12 @@ def main() -> None:
     scheduler.add_job(g2b_job.run, "interval", hours=1, id="g2b-collect")
     scheduler.add_job(g2b_award_job.run, "interval", hours=6, id="g2b-award-collect")
     scheduler.add_job(kstartup_job.run, "interval", hours=1, id="kstartup-collect")
-    # At :35 past every hour (a cron trigger, so a restart doesn't push it back; analyze
-    # runs at :x0, match at :x5), away from the top-of-the-hour group, to spread load. It
-    # was the first workaround for the intermittent "WinError 10035" failures (26-30
-    # BizInfo rows per run on 2026-10-07, at :08 alongside the others); the actual fixes
-    # are the per-thread Supabase client (repositories/opportunities.py) and writing only
-    # changed rows (BizInfoCollector).
+    # At :35 past every hour - a cron trigger, so a restart doesn't push it back. The
+    # hourly interval jobs above fire relative to process start, so after some restarts
+    # they land on :35 too; that is tolerable now. Spreading load was the first workaround
+    # for the intermittent "WinError 10035" failures (26-30 BizInfo rows per run on
+    # 2026-10-07, all jobs at :08); the actual fixes are the per-thread Supabase client
+    # (repositories/opportunities.py) and writing only changed rows (BizInfoCollector).
     scheduler.add_job(
         bizinfo_job.run,
         CronTrigger(minute=35, timezone="Asia/Seoul"),

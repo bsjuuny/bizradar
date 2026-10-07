@@ -162,3 +162,22 @@ def test_ict_inside_a_latin_word_does_not_keep_a_funding_parenthetical():
     # doesn't make a non-IT program IT.
     assert not is_it_related("의료기기 부품 국산화 지원사업 공고(AI District 조성사업)")
     assert is_it_related("지역선도기업 지원 공고(ICT 혁신기업 육성사업)")
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        # Real K-Startup titles missed before "IT" was a keyword (2026-10-08).
+        "2026 일본 도쿄 추계 IT 전시회(JAPAN IT Week Autumn) 참가기업 모집",
+        "(고용노동부) 2026년 K-디지털트레이닝(KDT) IT 참여기업 모집",
+        "2026년 IT기업 해외진출 지원사업",
+        "2026년 정보기술 융합 지원사업",
+    ],
+)
+def test_it_itself_is_an_it_keyword(title):
+    assert is_it_related(title)
+
+
+def test_it_inside_a_latin_word_is_not():
+    assert not is_it_related("2026년 VISIT KOREA 관광 스타트업 모집")
+    assert not is_it_related("2026년 SUBMIT 지원사업")

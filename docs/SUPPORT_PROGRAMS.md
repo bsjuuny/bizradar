@@ -104,7 +104,8 @@ matched with the rule in "Dedupe" below.
   "1,443" tolerated) and at least that many *distinct* ids received. A missing totCnt, a
   short or empty list, or repeated/missing ids all skip the closing step, so an upstream
   hiccup can't close announcements that are still open.
-- `last_seen_at`: when the posting was last in a response (upserts set it; skipped rows
+- `last_seen_at` (always set for 기업마당 rows - a check constraint): when the posting was
+  last in a response (upserts set it; skipped rows
   are refreshed by the job), whether or not the response was complete. The closing step
   can stall - an expired key, or responses that keep coming back incomplete - and for the
   65% of postings without a deadline date, leaving the list is the only way they close.
@@ -179,7 +180,8 @@ K-Startup row collected between BizInfo runs is picked up within the hour.
 ## Web
 
 `/support` gets its rows from one SQL function, `list_support_programs(...)`
-(`supabase/migrations/20261007130000_support_programs_listing.sql`), which filters, hides
+(`supabase/migrations/20261007130000_support_programs_listing.sql`, replaced by
+`20261008100000_support_programs_open_follows_original.sql`), which filters, hides
 paired copies, orders and pages in one place:
 
 1. `filtered`: the page's filters (status, IT, investment, 출처, 지원분야, search term)
@@ -300,17 +302,21 @@ The collector now decodes them; the reclassify run fixes the stored rows.
 4. After the first run: the log line `bizinfo job finished` should show `collected` ~1,450,
    `failed` 0, `complete` true, followed by `cross-source dedupe finished` (~17 marked).
 
-Steps 1-4 were done 2026-10-07. The changes after it (filters, review fixes) add two
-migrations - `20261007120000_support_programs_it_related.sql` and
-`20261007130000_support_programs_listing.sql` - and roll out the same way:
+Steps 1-4 were done 2026-10-07. The filters and review fixes after it added
+`20261007120000_support_programs_it_related.sql`, `20261007130000_support_programs_listing.sql`
+(`last_seen_at`, `is_open()`, `list_support_programs()`) and two permission migrations
+(`20261007140000`, `20261007150000`: EXECUTE revoked from PUBLIC and anon) - all applied
+2026-10-07, reclassify run, pushed and the worker restarted.
 
-1. `npx supabase db push` (both; the second adds `last_seen_at` and creates `is_open()`
-   and `list_support_programs()`) - before the web deploy (it calls the function and reads
-   `is_open` and `it_related`) **and** before any worker restart: the worker runs from
-   this checkout, and against the old schema every K-Startup and 기업마당 upsert fails
-   (`it_related`, `last_seen_at`) and the dedupe read fails (`is_open`). Both migrations
-   are additive, so applying them under the currently running worker and web is safe.
-2. `python -m worker.jobs.support_reclassify --dry-run`, then without `--dry-run` - fills
-   `it_related` and re-normalizes stored text (K-Startup entities, whitespace); until then
-   "IT 관련만" shows nothing.
+`20261008100000_support_programs_open_follows_original.sql` (the copy-follows-original
+`is_open`, `is_open_on_its_own`, the NULL "unknown" status, the 기업마당 `last_seen_at`
+check) rolls out the same way:
+
+1. `npx supabase db push` - before the web deploy **and** before any worker restart: the
+   worker runs from this checkout and its dedupe read selects `is_open_on_its_own`
+   (against the old schema that read fails each hour; collection itself is unaffected).
+   The migration only adds and replaces functions with the same signatures, so applying
+   it under the running worker and web is safe.
+2. `python -m worker.jobs.support_reclassify --dry-run`, then without `--dry-run` - the
+   IT filter now also reads "IT" and 정보기술 (2 K-Startup rows on 2026-10-08).
 3. Push to `master`, then `pm2 restart bizradar-worker`.

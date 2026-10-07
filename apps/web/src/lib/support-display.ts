@@ -22,7 +22,8 @@ export function parseSupportSource(value: string | null | undefined): SupportSou
  * 모집 상태 필터. 기본값은 "open" - 마감된 공고가 전체의 대부분이라(2026-10-07: 2,493건 중
  * K-Startup 910건이 마감) 기본으로 보여주면 신청할 수 있는 공고가 묻힌다.
  * - open: 모집 중(recruiting)이고 마감일이 없거나 오늘 이후 - DB 함수 is_open(support_programs)
- *   (supabase/migrations/20261007130000_support_programs_listing.sql)이 유일한 정의다.
+ *   (supabase/migrations/20261008100000_support_programs_open_follows_original.sql)이
+ *   유일한 정의다. 짝지은 기업마당 사본은 원본이 마감이면 함께 마감이다.
  *   마감일 조건까지 거는 이유는 K-Startup의 모집 여부 플래그가 마감일보다 늦게 바뀌는
  *   경우가 있어서다(16건 실측). 기업마당 공고는 3일 넘게 목록에서 보이지 않으면 마감이다 -
  *   날짜 없는 공고는 목록에서 내려가는 것 말고는 마감될 길이 없다.
