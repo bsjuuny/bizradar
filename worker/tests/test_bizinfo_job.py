@@ -71,7 +71,7 @@ class FakeRepo:
         self.closed_from = stored
         return 0
 
-    def fetch_open_kstartup_titles(self):
+    def fetch_kstartup_pairing_titles(self):
         return self.kstartup
 
     def fetch_bizinfo_for_dedupe(self):
@@ -269,7 +269,7 @@ def test_dedupe_failure_is_logged_not_raised(monkeypatch, configured, caplog):
     def broken_fetch():
         raise RuntimeError("db down")
 
-    configured.fetch_open_kstartup_titles = broken_fetch
+    configured.fetch_kstartup_pairing_titles = broken_fetch
 
     with caplog.at_level(logging.ERROR):
         bizinfo_job.run()

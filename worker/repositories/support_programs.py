@@ -85,9 +85,15 @@ def _read_all(table: str, columns: str, narrow: Callable[[Any], Any]) -> list[di
 # this interval, or listed rows would flicker out between refreshes
 # (test_support_programs_repository.py checks it against the migration).
 LAST_SEEN_REFRESH_AFTER = timedelta(days=1)
-# fetch_bizinfo_state's "recently seen": every listed row was refreshed within
-# LAST_SEEN_REFRESH_AFTER (plus a run), so twice that covers them all.
-_STATE_WINDOW = 2 * LAST_SEEN_REFRESH_AFTER
+# What the hourly reads look at: 기업마당 rows seen in the list this recently. Every listed
+# row was refreshed within LAST_SEEN_REFRESH_AFTER (plus a run), so this covers them with a
+# wide margin, and it keeps the reads the size of a month of listings even if the closing
+# pass stalls - otherwise delisted rows would stay recruiting=true and pile into every read.
+_STATE_WINDOW = timedelta(days=30)
+# K-Startup originals a 기업마당 copy may pair with: open ones and those closed this
+# recently, so a copy first collected just after its original closed still pairs (pairing
+# never changes status - it only collapses the two into one listed row).
+PAIRING_WINDOW = timedelta(days=30)
 
 
 def _parse_timestamp(value: str | None) -> datetime | None:
@@ -95,18 +101,19 @@ def _parse_timestamp(value: str | None) -> datetime | None:
 
 
 def fetch_bizinfo_state() -> dict[str, StoredRow]:
-    """external_id -> StoredRow for the 기업마당 rows a run can touch: the recruiting ones
-    (the only ones the closing pass can close) and any seen in the list recently (so a
-    listed posting past its deadline, stored as closed, is still recognized as
-    unchanged). Not the closed history - ~1,500 new postings a month pile up there, and a
-    closed posting that reappears is simply written again."""
+    """external_id -> StoredRow for the 기업마당 rows a run can touch: those seen in the
+    list within _STATE_WINDOW - every listed row, including a listed posting past its
+    deadline (stored closed, still recognized as unchanged), and every recruiting row the
+    closing pass may need to close. Not the closed history - ~1,500 new postings a month
+    pile up there, and a posting that reappears after that long is simply written again.
+    A row still recruiting=true but unseen for longer (the closing pass stalled for a
+    month) drops out too; is_open already treats it as closed (date-less: 3 days unseen;
+    dated: its date), so only the stored flag lags."""
     since = (datetime.now(UTC) - _STATE_WINDOW).isoformat()
     rows = _read_all(
         "support_programs",
         "id, external_id, content_hash, recruiting, last_seen_at",
-        lambda query: query.eq("source", "bizinfo").or_(
-            f'recruiting.is.true,last_seen_at.gte."{since}"'
-        ),
+        lambda query: query.eq("source", "bizinfo").gte("last_seen_at", since),
     )
     return {
         row["external_id"]: StoredRow(
@@ -173,16 +180,20 @@ def _program_title(row: Mapping[str, Any]) -> ProgramTitle:
     )
 
 
-def fetch_open_kstartup_titles() -> list[ProgramTitle]:
-    """K-Startup rows that are open right now - the is_open computed column, the one
+def fetch_kstartup_pairing_titles() -> list[ProgramTitle]:
+    """K-Startup rows a 기업마당 copy may pair with: undated ones and those whose deadline
+    is at most PAIRING_WINDOW ago - all open ones (K-Startup rows close on their date) and
+    the recently closed. "Open" elsewhere is the is_open computed column, the one
     definition of "모집 중" that the web filters on too
     (supabase/migrations/20261008100000_support_programs_open_status.sql). A
-    기업마당 copy is paired only with an original the default 모집 중 view would actually
-    show."""
+    pairing itself never changes a row's status."""
+    since = (datetime.now(UTC) - PAIRING_WINDOW).isoformat()
     rows = _read_all(
         "support_programs",
         "id, title, application_end, region",
-        lambda query: query.eq("source", "kstartup").eq("is_open", True),
+        lambda query: query.eq("source", "kstartup").or_(
+            f'application_end.is.null,application_end.gte."{since}"'
+        ),
     )
     return [_program_title(row) for row in rows]
 
@@ -192,18 +203,19 @@ def fetch_bizinfo_for_dedupe() -> tuple[
 ]:
     """(open rows to pair, rows that carry a mark, id -> current duplicate_of of both).
 
-    "Open" is is_open, as for the K-Startup side. It implies recruiting for 기업마당
-    (recruiting is never NULL there), so the
-    recruiting-or-marked read covers every candidate. Marked rows are read whether open
+    "Open" is is_open. An open 기업마당 row has been seen within 3 days or carries a
+    future date while listed - either way within _STATE_WINDOW - so the recent-or-marked
+    read covers every candidate. Marked rows are read whether open
     or not: plan_duplicate_marks re-checks each against its original, so a rule change
     reaches old pairs too. That set only grows with real duplicates - 17 of ~1,450 open
     postings on 2026-10-07, so a few hundred a year: one page, and microseconds to
     re-match."""
+    since = (datetime.now(UTC) - _STATE_WINDOW).isoformat()
     rows = _read_all(
         "support_programs",
         "id, title, application_end, region, duplicate_of, is_open",
         lambda query: query.eq("source", "bizinfo").or_(
-            "recruiting.is.true,duplicate_of.not.is.null"
+            f'last_seen_at.gte."{since}",duplicate_of.not.is.null'
         ),
     )
     open_rows = [_program_title(row) for row in rows if row["is_open"] is True]

@@ -661,3 +661,36 @@ def test_html_to_text_separates_table_cells_and_br_with_attributes():
     assert html_to_text("<td>지원대상</td><td>중소기업</td>") == "지원대상 중소기업"
     assert html_to_text("a<br class='x'>b") == "a\nb"
     assert html_to_text("<b>지원</b>대상") == "지원대상"
+
+
+def test_systemic_write_failure_stops_retrying(monkeypatch):
+    calls = []
+
+    def upsert(programs):
+        calls.append(len(programs))
+        raise RuntimeError("relation support_programs has no column last_seen_at")
+
+    monkeypatch.setattr("worker.repositories.support_programs.upsert_bizinfo_programs", upsert)
+    monkeypatch.setattr("worker.collectors.bizinfo.UPSERT_CHUNK_SIZE", 2)
+    monkeypatch.setattr("worker.collectors.bizinfo.SYSTEMIC_FAILURE_ROWS", 2)
+    collector = _collector(lambda request: httpx.Response(200, text=_fixture_text()))
+
+    result = collector.run()
+
+    # One chunk, two single-row retries, then nothing more - not one request per row.
+    assert calls == [2, 1, 1]
+    assert result.failed == 5 and result.persisted == 0
+    assert "not attempted" in result.errors[-1]
+
+
+def test_bare_less_than_sign_is_text_not_a_tag():
+    assert html_to_text("<p>매출 <10억 기업</p><p>지원 > 5건</p>") == "매출 <10억 기업\n지원 > 5건"
+    assert html_to_text("<p>A <B and C</p><p>D</p>") == "A <B and C\nD"
+    assert html_to_text("<붙임> 신청서") == "<붙임> 신청서"
+
+
+def test_time_with_seconds_is_read():
+    assert parse_period("2026-10-01 09:00:00 ~ 2026-10-31 18:00:00") == (
+        date(2026, 10, 1),
+        date(2026, 10, 31),
+    )

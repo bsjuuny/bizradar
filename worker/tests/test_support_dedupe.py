@@ -278,10 +278,20 @@ def test_mark_is_cleared_once_the_rule_no_longer_matches():
     assert plan_duplicate_marks([], [BZ], [(BZ, other)], {"bz-1": "ks-9"}) == {"bz-1": None}
 
 
-def test_mark_moves_to_a_better_open_original():
-    weaker = ProgramTitle("ks-2", "2026년 서울창업센터 오픈이노베이션 참여기업 모집", None)
-    marks = plan_duplicate_marks([KS], [BZ], [(BZ, weaker)], {"bz-1": "ks-2"})
-    assert marks == {"bz-1": "ks-1"}
+def test_mark_moves_only_to_a_strictly_better_original():
+    # Scores against BZ (overlap, Jaccard): KS (0.94, 0.77); `weaker` (0.81, 0.66);
+    # `better` (0.96, 0.76).
+    end = date(2026, 10, 11)
+    weaker = ProgramTitle(
+        "ks-2", "2026년 서울창업센터 관악 SK 오픈이노베이션 프로그램 참여기업 모집", end
+    )
+    better = ProgramTitle("ks-3", "2026년 관악 SK에코플랜트 오픈이노베이션 참여기업 모집", end)
+
+    # Marked to KS, which has closed (not among the open originals): a weaker open match
+    # doesn't take the mark over.
+    assert plan_duplicate_marks([weaker], [BZ], [(BZ, KS)], {"bz-1": "ks-1"}) == {}
+    # A better one does.
+    assert plan_duplicate_marks([better], [BZ], [(BZ, KS)], {"bz-1": "ks-1"}) == {"bz-1": "ks-3"}
 
 
 def test_copy_with_an_unreadable_tag_is_never_hidden():

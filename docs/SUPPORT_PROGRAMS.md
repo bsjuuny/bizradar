@@ -62,12 +62,14 @@ matched with the rule in "Dedupe" below.
 - Retries (transport errors, 5xx) wait 2 s then 5 s; 4xx is not retried. `content_hash`
   leaves out `inqireCo` (view count) and `totCnt` (list size), which change every fetch.
 - Only changed rows are written: the job reads the stored `(id, content_hash,
-  recruiting)` once per run - for rows still recruiting or seen in the last 2 days, not the
-  ever-growing closed history - and hands it to the collector (if that read fails, every
+  recruiting)` once per run - for rows seen in the list within 30 days (every listed row,
+  and every recruiting row the closing step may close), not the ever-growing closed
+  history; bounded even if the closing step stalls for weeks - and hands it to the collector (if that read fails, every
   row is written) and to the closing step. A posting that matches is skipped - nearly all
   of the ~1,450 are, every hour - and the changed ones are upserted 100 per request
-  (`BizInfoCollector.run`; a failing chunk is retried row by row), so even a rule change
-  that touches every listed row is ~15 requests. Listed rows get their `last_seen_at` refreshed in chunks
+  (`BizInfoCollector.run`; a failing chunk is retried row by row, and after 5 single-row
+  failures in a row the rest of the run's writes are given up - that is the database,
+  not the rows), so even a rule change that touches every listed row is ~15 requests. Listed rows get their `last_seen_at` refreshed in chunks
   of 100 once it is a day old (not hourly: every update also bumps `updated_at` and leaves
   a dead tuple), whatever `persist()` did with them - a row whose upsert keeps failing is
   still listed. `content_hash` covers the stable payload *and*
@@ -164,13 +166,15 @@ visible twice.
 
 The pass runs at the end of every BizInfo job run (`worker/jobs/bizinfo_job.py`) - also
 when collection was skipped (no key) or failed; only a worker without Supabase settings
-skips it. It pairs open 기업마당 rows with open K-Startup rows (`plan_duplicate_marks`).
+skips it. It pairs open 기업마당 rows with K-Startup rows that are open or closed within
+the last 30 days (`plan_duplicate_marks`) - so a copy first collected just after its
+original closed still pairs; with the 30-day window the live data of 2026-10-08 gives
+the same 17 pairs.
 A pair stays paired after either side closes, as long as the two titles still match
 under the current rule - every marked row is re-checked against its original each run,
-so a rule change clears marks that no longer hold, and a better open original takes a
-mark over. Un-pairing on close would list the program twice under "마감 포함 전체". It
-writes only rows whose mark changes, one request per distinct value. "Open" is `is_open`
-on both sides. A K-Startup row collected between BizInfo runs is picked up within the
+so a rule change clears marks that no longer hold, and only a strictly better-scoring
+original takes a mark over. Un-pairing on close would list the program twice under "마감 포함 전체". It
+writes only rows whose mark changes, one request per distinct value. "Open" is `is_open`. A K-Startup row collected between BizInfo runs is picked up within the
 hour.
 
 A pairing never changes either row's 모집 status. It is a fuzzy title match; if it were
@@ -197,8 +201,8 @@ paired copies, orders and pages in one place:
 
 1. `filtered`: the page's filters (status, IT, investment, 출처, 지원분야, search term)
    applied to every row of `support_programs`, projecting only the listed columns (not
-   `raw_payload`/`description`). Bad arguments (an unknown status, a page size outside
-   1-100, a negative offset or window) raise an error rather than quietly returning
+   `raw_payload`/`description`). Bad arguments (an unknown status or 출처, a page size
+   outside 1-100, a negative offset or window) raise an error rather than quietly returning
    something else - any signed-in user can call the RPC directly.
 2. `visible`: an original and its copies (more than one is possible - a 공고 and its
    재공고 both repeating one K-Startup posting, seen once on 2026-10-08) form a group, and
@@ -214,7 +218,9 @@ paired copies, orders and pages in one place:
 3. Order: open first, by nearest deadline (no deadline last); then unknown status
    (could still be open - not buried under the closed history); then closed, most
    recently closed first.
-4. Search is `strpos(lower(...))`, not LIKE - `%`, `_`, `*` are just characters.
+4. Search is `~*` with the regex literal prefix `***=` - the same literal, case-insensitive
+   match as every other list (`apps/web/src/lib/postgrest.ts`); `%`, `_`, `*` are just
+   characters.
 
 "모집 중" anywhere - this page, "7일 안에 마감", the deadline column, the detail page's
 모집상태, the worker's pairing - is the SQL function `is_open(support_programs)` (a

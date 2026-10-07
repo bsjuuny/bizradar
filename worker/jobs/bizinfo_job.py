@@ -18,7 +18,8 @@ Two follow-up passes, each isolated from the other:
 2. dedupe (every run with Supabase configured, even when collection was skipped or failed
    - K-Startup rows keep opening and closing, and a stale duplicate_of would pair a
    기업마당 copy with a K-Startup original that has left the 모집 중 view): 기업마당 rows
-   that repeat an open K-Startup announcement get duplicate_of set, so Support Radar
+   that repeat a K-Startup announcement (open, or closed within 30 days) get
+   duplicate_of set, so Support Radar
    shows the program once (worker/dedupe/support_programs.py). K-Startup is the row kept:
    it is the original posting and carries more fields (모집 여부, 지원대상, 지역) - unless
    only the copy is still open. A pair stays paired after either side closes
@@ -134,7 +135,7 @@ def collect() -> None:
 
 
 def dedupe() -> None:
-    kstartup = support_programs.fetch_open_kstartup_titles()
+    kstartup = support_programs.fetch_kstartup_pairing_titles()
     bizinfo, marked_rows, current = support_programs.fetch_bizinfo_for_dedupe()
     originals = support_programs.fetch_program_titles(
         original_id for row in marked_rows if (original_id := current[row.id]) is not None
@@ -150,7 +151,7 @@ def dedupe() -> None:
         "bizinfo: cross-source dedupe finished",
         extra={
             "job": JOB,
-            "kstartup_open": len(kstartup),
+            "kstartup_candidates": len(kstartup),
             "bizinfo_open": len(bizinfo),
             "already_marked": len(marked),
             "marked": sum(1 for value in changes.values() if value is not None),

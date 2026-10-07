@@ -140,8 +140,15 @@ def find_duplicates(keep: Iterable[ProgramTitle], hide: Iterable[ProgramTitle]) 
     (the best-scoring one if several qualify - by overlap, then Jaccard, since a longer
     title that merely contains the candidate ties on overlap). `keep` rows are never
     hidden."""
+    return {row_id: original for row_id, (_, original) in _best_matches(keep, hide).items()}
+
+
+def _best_matches(
+    keep: Iterable[ProgramTitle], hide: Iterable[ProgramTitle]
+) -> dict[str, tuple[tuple[float, float], str]]:
+    """find_duplicates with each match's score."""
     keep_rows = list(keep)
-    duplicates: dict[str, str] = {}
+    duplicates: dict[str, tuple[tuple[float, float], str]] = {}
     for candidate in hide:
         if not candidate.may_be_hidden:
             continue
@@ -151,7 +158,7 @@ def find_duplicates(keep: Iterable[ProgramTitle], hide: Iterable[ProgramTitle]) 
             if score is not None and (best is None or score > best[0]):
                 best = (score, original.id)
         if best is not None:
-            duplicates[candidate.id] = best[1]
+            duplicates[candidate.id] = best
     return duplicates
 
 
@@ -169,17 +176,14 @@ def plan_duplicate_marks(
     closing is no reason to un-pair them - un-pairing would list the program twice under
     "마감 포함 전체". A mark only decides which row stands for the pair in a listing
     (list_support_programs: the original, unless only the copy is open); it never changes
-    either row's 모집 status. So a mark moves only to a better open original, and is
-    cleared only when the rule no longer matches."""
-    duplicates = find_duplicates(keep, hide)
+    either row's 모집 status. So a mark moves only to a strictly better-scoring original,
+    and is cleared only when the rule no longer matches."""
+    best = _best_matches(keep, hide)
     for copy, original in marked:
-        if (
-            copy.id not in duplicates
-            and copy.may_be_hidden
-            and match_score(copy, original) is not None
-        ):
-            duplicates[copy.id] = original.id
-    return plan_updates(current, duplicates)
+        existing = match_score(copy, original) if copy.may_be_hidden else None
+        if existing is not None and (copy.id not in best or best[copy.id][0] <= existing):
+            best[copy.id] = (existing, original.id)
+    return plan_updates(current, {row_id: original for row_id, (_, original) in best.items()})
 
 
 def plan_updates(

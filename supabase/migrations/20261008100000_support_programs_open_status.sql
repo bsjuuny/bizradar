@@ -25,7 +25,10 @@
 --    지나지 않음)으로 먼저 거른다 - 정의는 여전히 is_open 하나이고, 마감된 이력(매달 ~1,500건씩
 --    쌓인다)에 is_open을 계산하지 않으려는 것뿐이다. "마감 포함 전체"는 전체를 센다 - 2026-10-08
 --    기준 ~2,500행이라 요청마다 수 ms이고, 몇 년 동안은 그대로다.
--- 4. 기업마당 행은 last_seen_at이 반드시 있다(check). is_open은 NULL을 "추적하지 않음"
+-- 4. list_support_programs: 모르는 출처(p_source)도 오류로 거절한다 - 상태값·페이지처럼
+--    오타가 "공고 없음"으로 보이면 안 된다. 검색어는 다른 목록(apps/web/src/lib/postgrest.ts)과
+--    같은 방식으로 찾는다: ~*(대소문자 무시) + 정규식 "***=" 접두어(뒤를 전부 글자 그대로).
+-- 5. 기업마당 행은 last_seen_at이 반드시 있다(check). is_open은 NULL을 "추적하지 않음"
 --    (K-Startup)으로 건너뛰는데, 기업마당 행이 NULL이면 그 규칙을 빠져나간다. 워커는 2026-10-07
 --    배포부터 upsert마다 값을 쓰고, 2026-10-08 실측 1,473건 모두 값이 있다.
 --
@@ -76,6 +79,10 @@ create or replace function list_support_programs(
       raise exception 'list_support_programs: unknown status %', p_status
         using errcode = '22023';
     end if;
+    if p_source is not null and p_source not in ('kstartup', 'bizinfo') then
+      raise exception 'list_support_programs: unknown source %', p_source
+        using errcode = '22023';
+    end if;
     if p_limit is null or p_limit < 1 or p_limit > 100
       or p_offset is null or p_offset < 0
       or p_closing_days is null or p_closing_days < 0 or p_closing_days > 366 then
@@ -97,8 +104,8 @@ create or replace function list_support_programs(
           and (p_categories is null or p.category = any (p_categories))
           and (
             p_term is null
-            or strpos(lower(p.title), lower(p_term)) > 0
-            or strpos(lower(coalesce(p.organization, '')), lower(p_term)) > 0
+            or p.title ~* ('***=' || p_term)
+            or coalesce(p.organization, '') ~* ('***=' || p_term)
           )
           -- A necessary condition of is_open (see the header), checked first.
           and (

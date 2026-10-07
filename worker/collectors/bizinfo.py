@@ -67,8 +67,10 @@ MAX_RETRIES = 3
 # Seconds before retry 1, 2, ... after a transport error or 5xx - immediate retries of a
 # 5,000-item request just repeat the failure against a struggling server.
 RETRY_BACKOFF_SECONDS = (2.0, 5.0)
-# Changed rows per upsert request (see BizInfoCollector.run).
+# Changed rows per upsert request, and how many single-row retries may fail in a row
+# before the rest of the run's writes are given up (see BizInfoCollector.run).
 UPSERT_CHUNK_SIZE = 100
+SYSTEMIC_FAILURE_ROWS = 5
 # Per-item fields that change without the announcement changing: the view counter, and the
 # list-wide total (shifts whenever any announcement is added or removed). Left out of
 # content_hash so it only moves when the posting itself does.
@@ -76,12 +78,13 @@ _VOLATILE_FIELDS = frozenset({"inqireCo", "totCnt"})
 SEOUL = ZoneInfo("Asia/Seoul")
 
 # One date of a 신청기간 range: 2026-10-01, 2026.10.1., 2026. 10. 2., 2026/10/01 or
-# 20261001, optionally followed by a weekday "(목)" and a time "18:00" / "18시". The end
+# 20261001, optionally followed by a weekday "(목)" and a time "18:00" / "18:00:00" /
+# "18시". The end
 # date may leave out its year ("2026. 10. 2. ~ 10. 16.") - it then takes the start's year.
 # The range may use a full-width tilde and end with a remark in parentheses ("(예산 소진 시
 # 조기마감)"). None of these variants was in the 1,473 stored texts of 2026-10-08; they
 # are cheap to accept, and a range that doesn't parse loses its D-day.
-_DATE_SUFFIX = r"(?:\s*\([월화수목금토일]\))?(?:\s*\d{1,2}(?::\d{2}|\s*시))?"
+_DATE_SUFFIX = r"(?:\s*\([월화수목금토일]\))?(?:\s*\d{1,2}(?::\d{2}(?::\d{2})?|\s*시))?"
 _START_DATE = (
     r"(?:(?P<y1>\d{4})[.\-/]\s*(?P<m1>\d{1,2})[.\-/]\s*(?P<d1>\d{1,2})\.?"
     r"|(?P<y1c>\d{4})(?P<m1c>\d{2})(?P<d1c>\d{2}))"
@@ -102,7 +105,10 @@ _PERIOD = re.compile(
 # (inline) tags vanish without a gap - "<b>지원</b>대상" is one word.
 _LINE_BREAK_TAGS = re.compile(r"<\s*br\b[^>]*>|<\s*/\s*(?:p|div|li|tr|h\d)\s*>", re.IGNORECASE)
 _CELL_END_TAGS = re.compile(r"<\s*/\s*(?:td|th)\s*>", re.IGNORECASE)
-_TAGS = re.compile(r"<[^>]+>")
+# A tag starts with a letter, "/" or "!" - a bare "<" ("매출 <10억", "<붙임>") is text, and
+# must not swallow everything up to the next ">" (none of the 1,473 stored summaries of
+# 2026-10-08 has one - the API escapes it - but html_to_text shouldn't depend on that).
+_TAGS = re.compile(r"</?[A-Za-z!][^<>]*>")
 
 
 class StoredRow(NamedTuple):
@@ -463,28 +469,48 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         change makes every listed row "changed" (content_hash covers the derived columns),
         and ~1,450 single-row requests in one run is the burst that used to end in
         WinError 10035. A chunk that fails is retried row by row, so one bad row costs only
-        itself; those rows are moved from persisted to failed."""
+        itself; those rows are moved from persisted to failed. After
+        SYSTEMIC_FAILURE_ROWS single-row failures in a row the failure is taken to be the
+        database, not the rows (schema not migrated, Supabase down): the rest are failed
+        without another request rather than turning one run into ~1,450 doomed requests."""
         from worker.repositories.support_programs import upsert_bizinfo_programs
 
         self._pending = []
         result = super().run()
         pending, self._pending = self._pending, []
+        consecutive_failures = 0
+        last_error = ""
+
+        def fail(normalized: BizInfoNormalizedProgram, error: str) -> None:
+            result.persisted -= 1
+            result.failed += 1
+            result.errors.append(f"{normalized.external_id}: {error}")
+
         for start in range(0, len(pending), UPSERT_CHUNK_SIZE):
             chunk = pending[start : start + UPSERT_CHUNK_SIZE]
+            if consecutive_failures >= SYSTEMIC_FAILURE_ROWS:
+                for normalized in chunk:
+                    fail(normalized, f"not attempted after repeated failures: {last_error}")
+                continue
             try:
                 upsert_bizinfo_programs(chunk)
                 self.written.update(normalized.external_id for normalized in chunk)
+                consecutive_failures = 0
                 continue
             except Exception:
                 logger.warning("bizinfo: chunk upsert failed, retrying row by row", exc_info=True)
             for normalized in chunk:
+                if consecutive_failures >= SYSTEMIC_FAILURE_ROWS:
+                    fail(normalized, f"not attempted after repeated failures: {last_error}")
+                    continue
                 try:
                     upsert_bizinfo_programs([normalized])
                     self.written.add(normalized.external_id)
+                    consecutive_failures = 0
                 except Exception as exc:  # noqa: BLE001 - isolate per-record failures
-                    result.persisted -= 1
-                    result.failed += 1
-                    result.errors.append(f"{normalized.external_id}: {self._mask(str(exc))}")
+                    consecutive_failures += 1
+                    last_error = self._mask(str(exc))
+                    fail(normalized, last_error)
                     logger.warning(
                         "collector record failed",
                         extra={"source": self.source, "external_id": normalized.external_id},
