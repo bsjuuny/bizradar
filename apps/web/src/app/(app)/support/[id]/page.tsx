@@ -69,7 +69,9 @@ export default async function SupportProgramDetailPage({
         </div>
         <div>
           <dt className="text-muted-foreground">모집상태</dt>
-          <dd>{program.recruiting === null ? "—" : program.recruiting ? "모집중" : "마감"}</dd>
+          {/* is_open, not the raw flag: K-Startup's 모집 flag can still say Y after the
+              deadline, and this must agree with the list and the 마감 badge above. */}
+          <dd>{program.is_open ? "모집중" : "마감"}</dd>
         </div>
         <div>
           <dt className="text-muted-foreground">접수시작</dt>

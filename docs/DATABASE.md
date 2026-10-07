@@ -123,14 +123,15 @@ Implemented (Phase 1):
   `docs/DATA_PIPELINE.md#support-programs-k-startup-implemented-2026-08-10`. RLS: any
   authenticated user can `select`; only `service_role` writes - same pattern as
   `opportunities`.
-- `support_programs_listing` (view, `security_invoker`) - `support_programs` plus, for a
-  paired copy, `original_open` (the original is recruiting with no deadline or one not yet
-  passed, Asia/Seoul, evaluated at query time) and `original_end`. Readers that list
-  programs hide a copy only when its original is itself in the same result: with a
-  status-only filter, `duplicate_of is null or original_open is false` (plus the original's
-  deadline in range for "closing soon"); with source/search/IT/investment/field filters,
-  not at all - the two rows can pass those differently, and hiding the copy could drop
-  the program. `p.*` is fixed at creation: a migration adding a column to
+- `support_programs_listing` (view, `security_invoker`) - `support_programs` plus
+  `is_open` (`support_program_is_open(recruiting, application_end)`: recruiting - or
+  unknown with a deadline - and no deadline or one not yet passed, Asia/Seoul, evaluated at
+  query time; the only definition of 모집 중) and, for a paired copy, the original's
+  `original_open`, `original_end`, `original_title`, `original_organization`,
+  `original_category`, `original_it_related`, `original_investment_linked`. Readers that
+  list programs hide a copy only when its original is in the same result - open and
+  passing the same filters (`apps/web/src/lib/support-filters.ts`); never with a source
+  filter. Dates are stored as UTC midnight with an explicit offset. `p.*` is fixed at creation: a migration adding a column to
   `support_programs` must recreate this view.
 
 Planned (later phases, see `docs/MVP_SCOPE.md`):

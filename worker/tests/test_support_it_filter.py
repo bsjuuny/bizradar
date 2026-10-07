@@ -130,3 +130,9 @@ def test_latin_keywords_ignore_case_and_chatgpt_spacing():
 def test_business_commercialization_marker_is_not_a_funding_project():
     # "(AI 사업화 분야)" is a field marker - 사업화 is not a project name.
     assert is_it_related("2026년 창업기업 모집 공고(AI 사업화 분야)")
+
+
+def test_street_light_exception_does_not_eat_security_grade():
+    assert is_it_related("공공기관 정보보안등급 컨설팅 지원")
+    assert is_it_related("2026년 보안등급 인증 지원")
+    assert not is_it_related("가로등ㆍ보안등 교체 지원사업")

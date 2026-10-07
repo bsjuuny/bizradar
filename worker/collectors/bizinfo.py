@@ -403,11 +403,14 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
             "target": _field(item, "trgetNm") or None,
             "investment_linked": is_investment_linked(title, description),
             "it_related": is_it_related(title),
-            # Naive midnight, same convention as K-Startup's YYYYMMDD dates.
-            "application_start": datetime.combine(period[0], datetime.min.time())
+            # Explicit UTC midnight, same convention as K-Startup's YYYYMMDD dates (and what
+            # support_program_is_open() compares against).
+            "application_start": datetime.combine(period[0], datetime.min.time(), tzinfo=UTC)
             if period
             else None,
-            "application_end": datetime.combine(period[1], datetime.min.time()) if period else None,
+            "application_end": datetime.combine(period[1], datetime.min.time(), tzinfo=UTC)
+            if period
+            else None,
             "application_period_text": period_text or None,
             "description": description,
             "source_url": _absolute_url(_url_field(item, "pblancUrl", "link"), raw.external_id),

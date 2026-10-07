@@ -54,7 +54,8 @@ _NON_WORD = re.compile(r"[\s\W_ㆍ]+")
 _TRAILING_NOTICE = re.compile(r"(재|수정|변경|연장)?공고(문)?$")
 _NUMBERS = re.compile(r"\d+")
 _THOUSANDS_SEPARATOR = re.compile(r"(?<=\d),(?=\d{3}(?!\d))")
-_SHORT_YEAR = re.compile(r"[''‘’](\d{2})(?=\s*년)")
+# Apostrophe forms seen before an abbreviated year: ASCII ', curly ‘ ’, full-width ＇.
+_SHORT_YEAR = re.compile(r"['‘’＇](\d{2})(?=\s*년)")
 
 # Region words as both sources write them, expanded to the 시·도 they cover. A pair whose
 # regions are both specific and share no 시·도 is not the same program: generic titles
@@ -105,15 +106,12 @@ class ProgramTitle:
     title: str
     application_end: date | None
     region: str | None = None
-    normalized: str = field(init=False, compare=False)
     bigrams: frozenset[str] = field(init=False, compare=False)
     numbers: frozenset[str] = field(init=False, compare=False)
     regions: frozenset[str] = field(init=False, compare=False)
 
     def __post_init__(self) -> None:
-        normalized = normalize_title(self.title)
-        object.__setattr__(self, "normalized", normalized)
-        object.__setattr__(self, "bigrams", _bigrams(normalized))
+        object.__setattr__(self, "bigrams", _bigrams(normalize_title(self.title)))
         object.__setattr__(self, "numbers", _title_numbers(self.title))
         object.__setattr__(self, "regions", _region_set(self.region))
 
@@ -154,10 +152,6 @@ def match_score(a: ProgramTitle, b: ProgramTitle) -> tuple[float, float] | None:
     if overlap >= min_overlap and jaccard >= min_jaccard:
         return overlap, jaccard
     return None
-
-
-def is_same_program(a: ProgramTitle, b: ProgramTitle) -> bool:
-    return match_score(a, b) is not None
 
 
 def find_duplicates(keep: Iterable[ProgramTitle], hide: Iterable[ProgramTitle]) -> dict[str, str]:

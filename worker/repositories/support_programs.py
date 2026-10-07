@@ -1,9 +1,13 @@
 """Supabase persistence for support_programs. Uses the service_role client - RLS is
-bypassed here by design (see docs/DATABASE.md), this is the only writer."""
+bypassed here by design (see docs/DATABASE.md), this is the only writer.
+
+Whole-table reads page by id (worker/repositories/paging.py): never an unbounded select,
+which max-rows silently truncates, and keyed rather than offset paging, so rows the
+K-Startup or BizInfo job inserts meanwhile can't make a read skip or repeat a row."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import date, datetime
 from typing import Any
 
@@ -11,8 +15,9 @@ from worker.collectors.bizinfo import BizInfoNormalizedProgram
 from worker.collectors.kstartup import KStartupNormalizedProgram
 from worker.dedupe.support_programs import ProgramTitle
 from worker.repositories.opportunities import get_service_client
+from worker.repositories.paging import chunked, fetch_all_pages
 
-PAGE_SIZE = 1000
+_UPDATE_CHUNK_SIZE = 100
 
 
 def _common_row(
@@ -59,52 +64,35 @@ def upsert_bizinfo_program(normalized: BizInfoNormalizedProgram) -> None:
     client.table("support_programs").upsert(row, on_conflict="source,external_id").execute()
 
 
+def _read_all(table: str, columns: str, narrow: Callable[[Any], Any]) -> list[dict[str, Any]]:
+    """Every row of `table` matching `narrow(query)`, paged by id (must be in `columns`)."""
+    client = get_service_client()
+    return fetch_all_pages(lambda: narrow(client.table(table).select(columns)), key="id")
+
+
 def fetch_bizinfo_state() -> dict[str, tuple[str, bool | None]]:
     """external_id -> (content_hash, recruiting) for every stored 기업마당 row."""
-    client = get_service_client()
-    rows = _select_all(
-        lambda: (
-            client.table("support_programs")
-            .select("external_id, content_hash, recruiting")
-            .eq("source", "bizinfo")
-            .order("external_id")
-        )
+    rows = _read_all(
+        "support_programs",
+        "id, external_id, content_hash, recruiting",
+        lambda query: query.eq("source", "bizinfo"),
     )
     return {row["external_id"]: (row["content_hash"], row["recruiting"]) for row in rows}
-
-
-def _select_all(build_query: Any) -> list[dict[str, Any]]:
-    """Every page of an ordered select. Advances by the rows actually received and stops
-    only on an empty page, so a server max-rows below PAGE_SIZE can't silently truncate
-    (same guard as match_scores._fetch_all_pages, which hit that live on 2026-09-17)."""
-    rows: list[dict[str, Any]] = []
-    offset = 0
-    while True:
-        batch = build_query().range(offset, offset + PAGE_SIZE - 1).execute().data or []
-        if not batch:
-            return rows
-        rows.extend(batch)
-        offset += len(batch)
 
 
 def close_unlisted_bizinfo(listed_ids: Iterable[str]) -> int:
     """기업마당 목록에서 내려간 공고를 모집 마감으로 표시한다. Call only with the complete
     current list (BizInfoCollector.complete) - otherwise a truncated response would close
     announcements that are still open. Returns how many rows were closed."""
-    client = get_service_client()
     listed = set(listed_ids)
-    open_rows = _select_all(
-        lambda: (
-            client.table("support_programs")
-            .select("id, external_id")
-            .eq("source", "bizinfo")
-            .eq("recruiting", True)
-            .order("id")
-        )
+    open_rows = _read_all(
+        "support_programs",
+        "id, external_id",
+        lambda query: query.eq("source", "bizinfo").eq("recruiting", True),
     )
     stale = [row["id"] for row in open_rows if row["external_id"] not in listed]
-    for start in range(0, len(stale), 100):
-        chunk = stale[start : start + 100]
+    client = get_service_client()
+    for chunk in chunked(stale, _UPDATE_CHUNK_SIZE):
         client.table("support_programs").update({"recruiting": False}).in_("id", chunk).execute()
     return len(stale)
 
@@ -124,32 +112,28 @@ def fetch_open_kstartup_titles() -> list[ProgramTitle]:
     definition of "모집 중" that the web's default view filters on too
     (supabase/migrations/20261007130000_support_programs_listing.sql). A 기업마당 copy is
     paired only with an original that this view would actually show."""
-    client = get_service_client()
-    rows = _select_all(
-        lambda: (
-            client.table("support_programs_listing")
-            .select("id, title, application_end, region")
-            .eq("source", "kstartup")
-            .eq("is_open", True)
-            .order("id")
-        )
+    rows = _read_all(
+        "support_programs_listing",
+        "id, title, application_end, region",
+        lambda query: query.eq("source", "kstartup").eq("is_open", True),
     )
     return [_program_title(row) for row in rows]
 
 
 def fetch_open_bizinfo_titles() -> tuple[list[ProgramTitle], dict[str, str | None]]:
-    """Open 기업마당 rows, plus each one's current duplicate_of (to diff against)."""
-    client = get_service_client()
-    rows = _select_all(
-        lambda: (
-            client.table("support_programs")
-            .select("id, title, application_end, region, duplicate_of")
-            .eq("source", "bizinfo")
-            .eq("recruiting", True)
-            .order("id")
-        )
+    """The 기업마당 rows to pair (the recruiting ones) and the current duplicate_of of every
+    기업마당 row that is recruiting *or* still carries a mark. Closed rows are never paired,
+    so including their marks here is what clears them: otherwise a mark set while a row
+    was open - or by an older rule - would stay on it forever after it closed."""
+    rows = _read_all(
+        "support_programs",
+        "id, title, application_end, region, duplicate_of, recruiting",
+        lambda query: query.eq("source", "bizinfo").or_(
+            "recruiting.is.true,duplicate_of.not.is.null"
+        ),
     )
-    return [_program_title(row) for row in rows], {row["id"]: row["duplicate_of"] for row in rows}
+    candidates = [_program_title(row) for row in rows if row["recruiting"] is True]
+    return candidates, {row["id"]: row["duplicate_of"] for row in rows}
 
 
 def set_duplicate_of(changes: Mapping[str, str | None]) -> None:
@@ -185,10 +169,10 @@ DERIVED_COLUMNS: dict[str, tuple[str, ...]] = {
 
 def fetch_programs_for_reclassify(source: str) -> list[dict[str, Any]]:
     """Every row of one source: its derived columns plus the raw_payload they come from."""
-    client = get_service_client()
-    columns = "id, external_id, raw_payload, " + ", ".join(DERIVED_COLUMNS[source])
-    return _select_all(
-        lambda: client.table("support_programs").select(columns).eq("source", source).order("id")
+    return _read_all(
+        "support_programs",
+        "id, external_id, raw_payload, " + ", ".join(DERIVED_COLUMNS[source]),
+        lambda query: query.eq("source", source),
     )
 
 

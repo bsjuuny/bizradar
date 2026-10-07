@@ -9,12 +9,13 @@ docs/DATABASE.md). Fetching flat and joining in Python is more code but no surpr
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import datetime
 from typing import Any, cast
 
 from worker.matching.engine import CompanyProfile, MatchScore, OpportunityRequirements
 from worker.repositories.opportunities import get_service_client
+from worker.repositories.paging import chunked as _chunked
+from worker.repositories.paging import fetch_all_pages as _fetch_all_pages
 
 # .in_() puts every id into the GET request's query string. Once project_analyses
 # accumulates enough SUCCESS rows, that id list makes the URL long enough that
@@ -26,44 +27,11 @@ from worker.repositories.opportunities import get_service_client
 # request's id list small regardless of how large project_analyses grows.
 _IN_CLAUSE_CHUNK_SIZE = 150
 
-
-def _chunked(items: list[str], size: int) -> list[list[str]]:
-    return [items[i : i + size] for i in range(0, len(items), size)]
-
-
-# PostgREST caps an unbounded select at the project's max-rows setting and returns the
-# truncated first page with no error and no warning - the caller cannot tell a complete
-# result from a clipped one. Live on 2026-09-17: project_analyses held 1,902 SUCCESS
-# rows, the unbounded select below returned exactly 1,000, and match_job consequently
-# scored only 903 opportunities. The dropped rows were the most recently analyzed ones,
-# so every newly collected opportunity was missing a match_scores row entirely and the
-# Watch digest never had a score to show. Page explicitly instead of trusting an
-# unbounded select to return everything.
-_PAGE_SIZE = 1000
-
-
-def _fetch_all_pages(build_query: Callable[[], Any]) -> list[dict[str, Any]]:
-    """Reads every page of a select.
-
-    ``build_query`` must return a fresh *ordered* query - paginating an unordered
-    select lets rows repeat or go missing between requests, since PostgREST gives no
-    stable row order without an explicit sort.
-
-    Advances by however many rows actually came back rather than by _PAGE_SIZE, so a
-    server-side max-rows smaller than _PAGE_SIZE still paginates to the end instead of
-    stopping a page short.
-    """
-    rows: list[dict[str, Any]] = []
-    offset = 0
-    while True:
-        page = cast(
-            "list[dict[str, Any]]",
-            build_query().range(offset, offset + _PAGE_SIZE - 1).execute().data or [],
-        )
-        if not page:
-            return rows
-        rows.extend(page)
-        offset += len(page)
+# Paging (worker/repositories/paging.py): an unbounded select is silently capped at the
+# project's max-rows. Live on 2026-09-17 project_analyses held 1,902 SUCCESS rows, the
+# unbounded select here returned exactly 1,000, and match_job scored only 903
+# opportunities - every newly collected opportunity was missing a match_scores row and
+# the Watch digest never had a score to show.
 
 
 def _parse_datetime(value: Any) -> datetime | None:

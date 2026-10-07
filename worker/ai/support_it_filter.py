@@ -109,19 +109,23 @@ _IT_INDUSTRY_PROGRAM = re.compile(
 )
 
 # Removed from the title before matching - each a confirmed non-IT hit in the measurement.
-_EXCEPTIONS = [
-    # The ministry's name contains 정보통신; its non-IT programs would all match.
-    "과학기술정보통신부",
-    # TV 데이터홈쇼핑 is a broadcast shopping channel ("TV홈쇼핑 및 데이터홈쇼핑 입점지원").
-    "데이터홈쇼핑",
-    # 산업기술 유출 방지(기술보호) consulting - trade-secret protection, not infosec.
-    "산업보안",
-    # Street/security lighting, same exception as the G2B filter.
-    "보안등",
-    # Policy buzzword ("게임체인저 기업 육성"), not the game industry.
-    "게임체인저",
-    "게임 체인저",
-]
+_EXCEPTIONS = re.compile(
+    "|".join(
+        [
+            # The ministry's name contains 정보통신; its non-IT programs would all match.
+            "과학기술정보통신부",
+            # TV 데이터홈쇼핑 is a broadcast shopping channel ("TV홈쇼핑 및 데이터홈쇼핑").
+            "데이터홈쇼핑",
+            # 산업기술 유출 방지(기술보호) consulting - trade-secret protection, not infosec.
+            "산업보안",
+            # Street/security lighting (G2B filter exception) - but not 보안등급 (a security
+            # grade, which is infosec).
+            "보안등(?!급)",
+            # Policy buzzword ("게임체인저 기업 육성"), not the game industry.
+            r"게임\s*체인저",
+        ]
+    )
+)
 
 # ASCII or full-width parentheses ("（...）" appears in pasted titles).
 _TRAILING_PARENTHETICAL = re.compile(r"[(（][^()（）]*[)）]\s*$")
@@ -136,6 +140,5 @@ def is_it_related(title: str) -> bool:
         and not _IT_INDUSTRY_PROGRAM.search(trailing.group())
     ):
         text = text[: trailing.start()]
-    for phrase in _EXCEPTIONS:
-        text = text.replace(phrase, " ")
+    text = _EXCEPTIONS.sub(" ", text)
     return _IT.search(text) is not None

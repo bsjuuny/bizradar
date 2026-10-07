@@ -151,8 +151,8 @@ def test_normalize_dated_announcement():
     assert normalized.department == "중소벤처기업부"
     assert normalized.category == "내수"
     assert normalized.region == "경기"
-    assert normalized.application_start == datetime(2026, 10, 2)
-    assert normalized.application_end == datetime(2026, 10, 16)
+    assert normalized.application_start == datetime(2026, 10, 2, tzinfo=UTC)
+    assert normalized.application_end == datetime(2026, 10, 16, tzinfo=UTC)
     assert normalized.application_period_text == "2026-10-02 ~ 2026-10-16"
     assert normalized.target == "소상공인"
     assert normalized.recruiting is True
@@ -254,7 +254,7 @@ def test_normalize_spec_rss_aliases_and_html_summary():
     assert normalized.category == "경영"
     assert normalized.target == "중소기업"
     assert normalized.description == "임대료를 인하한 임대인을 선정하는 사업입니다."
-    assert normalized.application_end == datetime(2026, 10, 31)
+    assert normalized.application_end == datetime(2026, 10, 31, tzinfo=UTC)
     # http on the BizInfo host is upgraded.
     assert normalized.source_url.startswith("https://www.bizinfo.go.kr/")
 

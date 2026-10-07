@@ -131,9 +131,11 @@ same contest listed with different deadlines on the two sites (10-09 vs 10-11) s
 visible twice.
 
 The pass runs at the end of every BizInfo job run (`worker/jobs/bizinfo_job.py`) - also
-when collection was skipped (no key) or failed, so marks never go stale - over open
-K-Startup rows and recruiting BizInfo rows, and writes only rows whose mark changes,
-including clearing stale marks. "Open" K-Startup rows are read from
+when collection was skipped (no key) or failed. It pairs recruiting 기업마당 rows with open
+K-Startup rows, and diffs against the marks of every 기업마당 row that is recruiting *or*
+still carries a mark - so a closed copy's mark (set while it was open, or by an older
+rule) is cleared rather than kept forever. It writes only rows whose mark changes.
+"Open" K-Startup rows are read from
 `support_programs_listing.is_open` - the single SQL definition of 모집 중
 (`support_program_is_open()`), which the web filters on too.
 A K-Startup row collected between BizInfo runs is picked up within the hour.
@@ -150,23 +152,26 @@ A K-Startup row collected between BizInfo runs is picked up within the hour.
 
 `/support` reads the `support_programs_listing` view
 (`supabase/migrations/20261007130000_support_programs_listing.sql`): every row plus its
-`is_open` and, for a paired 기업마당 copy, `original_open` (is the K-Startup original open
-*right now*) and `original_end`. "모집 중" anywhere - this page, "7일 안에 마감", the
-worker's pairing - is `is_open`, i.e. the SQL function `support_program_is_open()`: one
-definition, so the three can't drift. A copy is hidden only when its original is itself
-in the same result:
+`is_open` and, for a paired 기업마당 copy, the original's current state and filter columns
+(`original_open`, `original_end`, `original_title`, `original_organization`,
+`original_category`, `original_it_related`, `original_investment_linked`).
 
-- status-only views: `duplicate_of is null or original_open is false`; for "7일 안에 마감"
-  the original's deadline must also fall in the window, or the copy stays.
-- with a source, search, IT, investment or 지원분야 filter: never hidden. One row of a pair
-  can pass those and the other not (the source itself, differently worded titles and
-  agency names, different taxonomies), so hiding the copy could drop the program; those
-  views may list it twice instead.
+"모집 중" anywhere - this page, "7일 안에 마감", the detail page's 모집상태, the worker's
+pairing - is `is_open`, i.e. the SQL function `support_program_is_open()`: the source says
+recruiting (or doesn't say, and gives a deadline), and there is no deadline or it hasn't
+passed (Asia/Seoul). One definition, so they can't drift.
 
-Because `original_open` is evaluated at query time, a copy reappears the moment its
-original closes or passes its deadline - not at the next hourly dedupe.
+A copy is hidden exactly when its original is in the same result: the original is open
+and passes every other active filter too - the deadline window, IT, investment, 지원분야
+and the search term are evaluated on the `original_*` columns
+(`copyHidingFilter` in `apps/web/src/lib/support-filters.ts`). With a 출처 filter nothing
+is hidden: original (K-Startup) and copy (기업마당) are never in the same result. A closed
+original never hides its open copy. All of it is evaluated at query time, so a copy
+reappears the moment its original closes or passes its deadline - not at the next hourly
+dedupe. A page number past the end (old link, shorter list) falls back to page 1.
 
-Each row shows its source under the title. The deadline column shows "마감" for a closed
+Each row shows its source under the title. The deadline column wraps (it can hold long
+신청기간 text) and shows "마감" for a closed
 posting (`recruiting=false`), else the D-day, else the 신청기간 text when there is no
 deadline date, else "일정 미정" (`apps/web/src/lib/support-display.ts`). Detail page:
 source-aware labels and "기업마당 원문 보기" link. Search terms are quoted for PostgREST's

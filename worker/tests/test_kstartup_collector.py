@@ -69,8 +69,8 @@ def test_normalize_maps_real_fields_and_flags_investment_linked():
     assert normalized.category == "행사ㆍ네트워크"
     assert normalized.region == "전국"
     assert normalized.recruiting is True
-    assert normalized.application_start == datetime(2026, 8, 7)
-    assert normalized.application_end == datetime(2026, 8, 18)
+    assert normalized.application_start == datetime(2026, 8, 7, tzinfo=UTC)
+    assert normalized.application_end == datetime(2026, 8, 18, tzinfo=UTC)
     assert normalized.source_url == (
         "https://www.k-startup.go.kr/web/contents/bizpbanc-ongoing.do?schM=view&pbancSn=178845"
     )

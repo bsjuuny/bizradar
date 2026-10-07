@@ -11,6 +11,7 @@ import {
   type SupportStatus,
   parseSupportField,
 } from "@/lib/support-display";
+import { copyHidingFilter } from "@/lib/support-filters";
 
 export const DEFAULT_PAGE_SIZE = 20;
 export const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
@@ -31,6 +32,8 @@ export type SupportProgramSummary = {
 };
 
 export type SupportProgramDetail = SupportProgramSummary & {
+  /** support_program_is_open() - the one definition of 모집 중 the list filters on. */
+  is_open: boolean;
   department: string | null;
   target: string | null;
   application_start: string | null;
@@ -45,16 +48,7 @@ export type SupportProgramPage = {
   pageSize: number;
 };
 
-export async function getSupportPrograms({
-  page = 1,
-  q,
-  status = "open",
-  itOnly,
-  investmentOnly,
-  source,
-  field,
-  pageSize,
-}: {
+export type SupportProgramQuery = {
   page?: number;
   q?: string;
   status?: SupportStatus;
@@ -63,7 +57,12 @@ export async function getSupportPrograms({
   source?: SupportSource;
   field?: SupportFieldKey;
   pageSize?: number;
-} = {}): Promise<SupportProgramPage> {
+};
+
+export async function getSupportPrograms(
+  options: SupportProgramQuery = {},
+): Promise<SupportProgramPage> {
+  const { page = 1, q, status = "open", itOnly, investmentOnly, source, field, pageSize } = options;
   await requireUser();
   const supabase = await createClient();
 
@@ -79,8 +78,9 @@ export async function getSupportPrograms({
   // TS widens any `+`-concatenated or variable-referenced string to plain `string`,
   // which breaks that inference (`GenericStringError` - same gotcha hit and documented
   // in apps/web/src/lib/opportunities.ts).
-  // support_programs_listing = support_programs + original_open/original_end for 기업마당
-  // copies (supabase/migrations/20261007130000_support_programs_listing.sql).
+  // support_programs_listing = support_programs + is_open, and for 기업마당 copies the
+  // original's current state and filter columns (original_*) -
+  // supabase/migrations/20261007130000_support_programs_listing.sql.
   let query = supabase
     .from("support_programs_listing")
     .select(
@@ -126,32 +126,37 @@ export async function getSupportPrograms({
     query = query.eq("source", source);
   }
 
-  const term = q?.trim();
+  const term = q?.trim() || undefined;
   if (term) {
     query = query.or(ilikeAnyFilter(["title", "organization"], term));
   }
 
-  // 기업마당 사본(duplicate_of가 있는 행)은 그 원본(K-Startup)이 이 보기에 지금 실제로 보일
-  // 때만 숨긴다 - 원본이 안 보이는데 사본까지 숨기면 공고가 아예 사라진다.
-  // - 상태 필터만 걸린 보기: 원본이 지금 모집 중이면 숨긴다. "7일 안에 마감"이면 원본 마감일도
-  //   그 안이어야 한다. "마감 포함 전체"는 원본이 모집 중이면 어차피 목록에 있다.
-  // - 출처·검색어·IT·투자연계·분야 조건이 있으면 숨기지 않는다. 두 행이 그 조건을 서로 다르게
-  //   통과할 수 있어서다(출처 자체, 기관명·제목 표기, 분류 체계가 다르다). 이런 보기에서는
-  //   같은 공고가 두 번 보이는 쪽을 택한다(2026-10-07 기준 17쌍).
-  // 원본 상태는 조회 시점 값(support_programs_listing.original_open/original_end)이라, 원본이
-  // 마감되면 다음 워커 실행을 기다리지 않고 바로 사본이 보인다.
-  const onlyStatusFilter = !term && !itOnly && !investmentOnly && !fieldGroup && !source;
-  if (onlyStatusFilter) {
-    query =
-      status === "closing"
-        ? query.or(
-            `duplicate_of.is.null,original_open.is.false,original_end.is.null,original_end.lt.${today},original_end.gt.${closingLimit}`,
-          )
-        : query.or("duplicate_of.is.null,original_open.is.false");
+  // 기업마당 사본은 원본(K-Startup)도 이 보기의 조건을 모두 통과해 함께 나올 때만 숨긴다 -
+  // 그렇지 않으면 공고가 아예 사라진다. 원본 쪽 조건은 조회 시점 값(original_*)으로 평가한다.
+  // 검색어 조건과 이 조건 모두 .or()를 쓰지만, 두 or 파라미터는 AND로 묶인다(2026-10-07 실측).
+  const hiding = copyHidingFilter({
+    status,
+    itOnly: Boolean(itOnly),
+    investmentOnly: Boolean(investmentOnly),
+    source,
+    categories: fieldGroup?.categories,
+    term,
+    today,
+    closingLimit,
+  });
+  if (hiding) {
+    query = query.or(hiding);
   }
 
   const { data, error, count } = await query;
-  if (error) throw new Error(`Failed to load support programs: ${error.message}`);
+  if (error) {
+    // A page past the end (an old link, or the list got shorter) - PostgREST answers 416
+    // PGRST103 instead of an empty page. Show the first page rather than an error.
+    if (error.code === "PGRST103" && safePage > 1) {
+      return getSupportPrograms({ ...options, page: 1 });
+    }
+    throw new Error(`Failed to load support programs: ${error.message}`);
+  }
 
   return {
     items: data ?? [],
@@ -166,9 +171,9 @@ export async function getSupportProgram(id: string): Promise<SupportProgramDetai
   const supabase = await createClient();
 
   const { data, error } = await supabase
-    .from("support_programs")
+    .from("support_programs_listing")
     .select(
-      "id, source, title, organization, supervising_type, category, region, recruiting, investment_linked, it_related, application_end, application_period_text, department, target, application_start, description, source_url",
+      "id, source, title, organization, supervising_type, category, region, recruiting, is_open, investment_linked, it_related, application_end, application_period_text, department, target, application_start, description, source_url",
     )
     .eq("id", id)
     .maybeSingle();

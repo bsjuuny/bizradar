@@ -9,10 +9,14 @@ import pytest
 from worker.dedupe.support_programs import (
     ProgramTitle,
     find_duplicates,
-    is_same_program,
+    match_score,
     normalize_title,
     plan_updates,
 )
+
+
+def _same(a: ProgramTitle, b: ProgramTitle) -> bool:
+    return match_score(a, b) is not None
 
 
 def _p(title: str, end: date | None, id_: str = "x") -> ProgramTitle:
@@ -112,12 +116,12 @@ DIFFERENT = [
 
 @pytest.mark.parametrize(("bz", "bz_end", "ks", "ks_end"), SAME)
 def test_same_announcement_on_both_sites_matches(bz, bz_end, ks, ks_end):
-    assert is_same_program(_p(bz, bz_end), _p(ks, ks_end))
+    assert _same(_p(bz, bz_end), _p(ks, ks_end))
 
 
 @pytest.mark.parametrize(("bz", "bz_end", "ks", "ks_end"), DIFFERENT)
 def test_different_announcements_do_not_match(bz, bz_end, ks, ks_end):
-    assert not is_same_program(_p(bz, bz_end), _p(ks, ks_end))
+    assert not _same(_p(bz, bz_end), _p(ks, ks_end))
 
 
 def test_normalize_title_strips_tags_punctuation_and_notice_suffix():
@@ -174,7 +178,7 @@ def test_hangul_and_latin_middle_dots_normalize_the_same():
     assert normalize_title("원전ㆍ에너지ㆍ수소 창업ㆍ벤처") == normalize_title(
         "원전·에너지·수소 창업·벤처"
     )
-    assert is_same_program(
+    assert _same(
         _p("[경북] 2026년 원전ㆍ에너지ㆍ수소 창업ㆍ벤처 지원사업 모집 공고", None),
         _p("2026년 원전·에너지·수소 창업·벤처 지원사업 모집", date(2026, 11, 1)),
     )
@@ -191,7 +195,7 @@ def test_hangul_and_latin_middle_dots_normalize_the_same():
 )
 def test_same_deadline_alone_does_not_make_a_short_title_a_duplicate(keep_title, hide_title):
     end = date(2026, 10, 31)
-    assert not is_same_program(_p(hide_title, end), _p(keep_title, end))
+    assert not _same(_p(hide_title, end), _p(keep_title, end))
 
 
 def test_generic_title_in_different_regions_is_not_the_same_program():
@@ -203,14 +207,18 @@ def test_generic_title_in_different_regions_is_not_the_same_program():
         "bz2", "[서울ㆍ인천ㆍ경기] 2026년 창업보육센터 입주기업 모집 공고", None, "서울·인천·경기"
     )
 
-    assert not is_same_program(daejeon, seoul)
-    assert is_same_program(daejeon, nationwide)  # 전국 says nothing specific
-    assert is_same_program(metro, seoul)  # overlapping regions
+    assert not _same(daejeon, seoul)
+    assert _same(daejeon, nationwide)  # 전국 says nothing specific
+    assert _same(metro, seoul)  # overlapping regions
 
 
 def test_numbers_written_differently_still_compare_equal():
     a = _p("2026년 1,000만원 지원 창업 프로그램", None)
     b = _p("2026년 1000만원 지원 창업 프로그램 모집 공고", None)
     c = _p("'26년 1000만원 지원 창업 프로그램 모집 공고", None)
-    assert is_same_program(a, b)
+    assert _same(a, b)
     assert a.numbers == c.numbers == frozenset({"2026", "1000"})
+
+
+def test_full_width_apostrophe_year_is_unified_too():
+    assert _p("＇26년 1차 창업 지원", None).numbers == frozenset({"2026", "1"})
