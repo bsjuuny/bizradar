@@ -212,6 +212,18 @@ def test_normalize_flags_investment_linked():
     assert flags == [False, False, False, False, True]
 
 
+def test_normalize_flags_it_related():
+    items = extract_items(_fixture_text())
+
+    flags = [_collector().normalize(_raw(item)).it_related for item in items]
+
+    # None of the five recorded postings is about IT (동행축제 라이브커머스, 석유화학업
+    # 버팀이음, 일경험 인턴형, 혁신제품 지정기간 연장, 부천 스타트업포럼).
+    assert flags == [False, False, False, False, False]
+    item = {"pblancId": "A", "pblancNm": "[경북] 정보보호 스타트업 육성사업 참여기업 모집 공고"}
+    assert _collector().normalize(_raw(item)).it_related is True
+
+
 def test_normalize_past_deadline_is_not_recruiting():
     item = {"pblancId": "A", "pblancNm": "지난 공고", "reqstBeginEndDe": "2026-09-01 ~ 2026-10-06"}
 

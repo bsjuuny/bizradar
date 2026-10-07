@@ -33,7 +33,10 @@ export default async function SupportProgramDetailPage({
           <span className="text-xs font-medium tabular-nums text-muted-foreground">
             {formatSupportDeadline(program.application_end, program.application_period_text)}
           </span>
-          <span className="text-xs text-muted-foreground">{supportSourceLabel(program.source)}</span>
+          <span className="text-xs text-muted-foreground">
+            {supportSourceLabel(program.source)}
+            {program.it_related && " · IT 관련"}
+          </span>
         </div>
         <h1 className="max-w-4xl text-2xl font-semibold text-balance">{program.title}</h1>
         <p className="text-sm text-muted-foreground">{program.organization ?? "주관기관 미확인"}</p>

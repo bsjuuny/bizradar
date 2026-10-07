@@ -96,6 +96,46 @@ def test_normalize_flags_non_investment_program_correctly():
     assert normalized.investment_linked is False
 
 
+def test_normalize_decodes_html_entities_the_api_sends():
+    # Real raw_payload values (pbanc_sn 178821 and 178949, stored 2026-08): the API
+    # HTML-escapes some fields, and they were shown on Support Radar as-is.
+    collector = KStartupCollector(settings=_settings())
+    raw = RawRecord(
+        source="kstartup",
+        external_id="178821",
+        fetched_at=datetime.now(UTC),
+        payload={
+            "biz_pbanc_nm": "「민관협력 오픈이노베이션 지원」2026년 &apos;성과기업 후속 지원&apos; "
+            "창업기업 모집 수정공고",
+            "supt_biz_clsfc": "기술개발(R&amp;D)",
+            "pbanc_ntrp_nm": " 포항연합기술지주 ",
+        },
+    )
+    normalized = collector.normalize(raw)
+
+    assert normalized.title == (
+        "「민관협력 오픈이노베이션 지원」2026년 '성과기업 후속 지원' 창업기업 모집 수정공고"
+    )
+    assert normalized.category == "기술개발(R&D)"
+    assert normalized.organization == "포항연합기술지주"
+
+
+def test_normalize_flags_it_related_from_title():
+    collector = KStartupCollector(settings=_settings())
+
+    def it_flag(title: str) -> bool:
+        raw = RawRecord(
+            source="kstartup",
+            external_id="X",
+            fetched_at=datetime.now(UTC),
+            payload={"biz_pbanc_nm": title},
+        )
+        return collector.normalize(raw).it_related
+
+    assert it_flag("2026년 블록체인 기업성장허브 입주기업 모집") is True
+    assert it_flag("2026 디캠프 배치 9기 모집 공고") is False
+
+
 def test_normalize_handles_missing_dates_and_empty_payload():
     collector = KStartupCollector(settings=_settings())
     raw = RawRecord(

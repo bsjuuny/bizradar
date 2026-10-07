@@ -2,7 +2,14 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/dal";
-import type { SupportSource } from "@/lib/support-display";
+import {
+  CLOSING_SOON_DAYS,
+  type SupportFieldKey,
+  type SupportSource,
+  type SupportStatus,
+  parseSupportField,
+  seoulDateKey,
+} from "@/lib/support-display";
 
 export const DEFAULT_PAGE_SIZE = 20;
 export const PAGE_SIZE_OPTIONS = [10, 20, 50, 100] as const;
@@ -17,6 +24,7 @@ export type SupportProgramSummary = {
   region: string | null;
   recruiting: boolean | null;
   investment_linked: boolean;
+  it_related: boolean;
   application_end: string | null;
   application_period_text: string | null;
 };
@@ -43,14 +51,20 @@ function escapeLikeTerm(term: string): string {
 export async function getSupportPrograms({
   page = 1,
   q,
+  status = "open",
+  itOnly,
   investmentOnly,
   source,
+  field,
   pageSize,
 }: {
   page?: number;
   q?: string;
+  status?: SupportStatus;
+  itOnly?: boolean;
   investmentOnly?: boolean;
   source?: SupportSource;
+  field?: SupportFieldKey;
   pageSize?: number;
 } = {}): Promise<SupportProgramPage> {
   await requireUser();
@@ -71,7 +85,7 @@ export async function getSupportPrograms({
   let query = supabase
     .from("support_programs")
     .select(
-      "id, source, title, organization, supervising_type, category, region, recruiting, investment_linked, application_end, application_period_text",
+      "id, source, title, organization, supervising_type, category, region, recruiting, investment_linked, it_related, application_end, application_period_text",
       { count: "exact" },
     )
     // 다른 출처에 같은 공고가 있어 워커가 숨긴 행(기업마당 쪽 사본) - 원본 행이 대신 보인다.
@@ -87,8 +101,32 @@ export async function getSupportPrograms({
     .order("id", { ascending: true })
     .range(from, to);
 
+  // support-display.ts의 SUPPORT_STATUSES 설명 참고. application_end는 날짜만 의미 있는
+  // 값(자정)이라 Asia/Seoul 오늘 날짜와 비교한다.
+  if (status !== "all") {
+    const today = seoulDateKey();
+    query = query.eq("recruiting", true);
+    if (status === "closing") {
+      query = query
+        .gte("application_end", today)
+        .lte("application_end", seoulDateKey(new Date(), CLOSING_SOON_DAYS));
+    } else {
+      // 검색어 조건도 .or()를 쓰지만, 두 or 파라미터는 AND로 묶인다(2026-10-07 실측).
+      query = query.or(`application_end.is.null,application_end.gte.${today}`);
+    }
+  }
+
+  if (itOnly) {
+    query = query.eq("it_related", true);
+  }
+
   if (investmentOnly) {
     query = query.eq("investment_linked", true);
+  }
+
+  const fieldGroup = parseSupportField(field);
+  if (fieldGroup) {
+    query = query.in("category", [...fieldGroup.categories]);
   }
 
   if (source) {
@@ -119,7 +157,7 @@ export async function getSupportProgram(id: string): Promise<SupportProgramDetai
   const { data, error } = await supabase
     .from("support_programs")
     .select(
-      "id, source, title, organization, supervising_type, category, region, recruiting, investment_linked, application_end, application_period_text, department, target, application_start, description, source_url",
+      "id, source, title, organization, supervising_type, category, region, recruiting, investment_linked, it_related, application_end, application_period_text, department, target, application_start, description, source_url",
     )
     .eq("id", id)
     .maybeSingle();

@@ -32,6 +32,7 @@ def _common_row(
         "target": normalized.target,
         "recruiting": normalized.recruiting,
         "investment_linked": normalized.investment_linked,
+        "it_related": normalized.it_related,
         "application_start": (
             normalized.application_start.isoformat() if normalized.application_start else None
         ),
@@ -133,3 +134,37 @@ def set_duplicate_of(changes: Mapping[str, str | None]) -> None:
         client.table("support_programs").update({"duplicate_of": duplicate_of}).eq(
             "id", row_id
         ).execute()
+
+
+# Columns derived from the source payload by the collectors' normalize(), i.e. the ones a
+# rule change can make stale (worker/jobs/support_reclassify.py).
+DERIVED_COLUMNS = (
+    "title",
+    "organization",
+    "department",
+    "supervising_type",
+    "category",
+    "region",
+    "target",
+    "description",
+    "investment_linked",
+    "it_related",
+)
+
+
+def fetch_programs_for_reclassify(source: str) -> list[dict[str, Any]]:
+    """Every row of one source with its derived columns - plus raw_payload for K-Startup,
+    whose normalize() is re-run from it. (BizInfo rows are only re-flagged from their
+    title; their raw payloads are large and not needed.)"""
+    client = get_service_client()
+    columns = "id, external_id, " + ", ".join(DERIVED_COLUMNS)
+    if source == "kstartup":
+        columns += ", raw_payload"
+    return _select_all(
+        lambda: client.table("support_programs").select(columns).eq("source", source).order("id")
+    )
+
+
+def update_program(row_id: str, changes: Mapping[str, Any]) -> None:
+    client = get_service_client()
+    client.table("support_programs").update(dict(changes)).eq("id", row_id).execute()

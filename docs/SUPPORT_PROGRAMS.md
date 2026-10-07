@@ -105,10 +105,61 @@ collected between BizInfo runs is picked up within the hour.
 
 ## Web
 
-`/support`: hides `duplicate_of` rows, shows each row's source under its title, adds a
-source filter (모든 출처 / K-Startup / 기업마당), and shows 신청기간 text when there is no
-deadline date (`apps/web/src/lib/support-display.ts`). Detail page: source-aware labels
-and "기업마당 원문 보기" link.
+`/support`: hides `duplicate_of` rows, shows each row's source under its title, and shows
+신청기간 text when there is no deadline date (`apps/web/src/lib/support-display.ts`).
+Detail page: source-aware labels and "기업마당 원문 보기" link.
+
+Filters (all plain links / GET params, no client JS - same pattern as `/opportunities`):
+
+| Filter | Param | Meaning |
+| --- | --- | --- |
+| 상태 (default 모집 중) | `status=open\|closing\|all` | open = `recruiting` and (no deadline or deadline >= today, Asia/Seoul). The date check is there because K-Startup's own 모집 flag lags its deadline (16 rows on 2026-10-07). closing = open with a deadline within 7 days. all = including closed. |
+| 출처 | `source=kstartup\|bizinfo` | |
+| IT 관련만 | `it=1` | `it_related` (see "IT filter") |
+| 투자연계형만 | `investment=1` | `investment_linked` |
+| 지원분야 | `field=<key>` | One shared grouping over both sources' category values (`SUPPORT_FIELDS`): 자금·융자, 기술개발, 창업·사업화, 공간·보육, 판로·수출, 경영·컨설팅·교육, 인력, 행사·네트워크, 기타. |
+
+Why "모집 중" is the default: of 2,493 visible rows on 2026-10-07, 910 were closed
+K-Startup postings; they sorted last but still made up most of the pages and the count.
+
+The 지원분야 groups map raw category strings, which must match the DB character for
+character (the middle dot is 'ㆍ' U+318D). All 18 values in use on 2026-10-07 map to exactly
+one group (checked against the DB and in `support-display.test.ts`). A category a source
+introduces later belongs to no group: such rows still list, they just never match a
+지원분야 chip until it's added.
+
+## IT filter - `worker/ai/support_it_filter.py`
+
+`it_related` = the program's subject is IT (SW·AI·데이터·클라우드·정보보호·ICT·블록체인·
+게임·핀테크, and DX·AX·스마트공장 programs whose vendors are IT/SI companies). Title-only
+keyword rule, computed at collection like `investment_linked`. Separate from the G2B
+procurement filter (`rule_filter.py`) because several of its keywords mean something else
+in support-program titles - measured on all 1,599 open programs (2026-10-07):
+"IoT/사물인터넷" = environmental-emission sensors for small workplaces (all 7 hits),
+"전산" = substring of 안전산업/가전산업, "플랫폼/온라인/디지털" = 소상공인 online-sales
+support, "로봇/반도체" = hardware. A trailing parenthetical (기업마당's funding-project
+name, e.g. "(AI 빅데이터 기반 의료바이오 첨단기기 연구제조센터 구축사업)" on a
+medical-device program) is ignored unless it names an IT-industry program.
+
+Result: 154 of 1,599 open programs. Every hit was read; then the 308 non-hits with weaker
+words were read for misses, which added 디지털혁신, 디지털 품질(SW testing), 가명정보,
+위치정보, 개인정보, 전자문서, 스마트시티, AIoT, ETRI, ChatGPT, 코딩 (17 programs). The 98 hits
+among closed K-Startup rows were read as well. Tests use those real titles.
+
+**Changing the rule (or any collector text handling) requires a reclassify run** - the
+column is written at collection time only, and K-Startup re-fetches just its newest 500:
+
+```
+python -m worker.jobs.support_reclassify --dry-run
+python -m worker.jobs.support_reclassify
+```
+
+It re-runs K-Startup's `normalize()` on each stored `raw_payload` and re-flags BizInfo
+titles, writing only columns that changed (never recruiting, dates or `duplicate_of`).
+
+Same change set: K-Startup's API HTML-escapes some fields (`&apos;`, `&amp;` - 28 stored
+rows, e.g. category "기술개발(R&amp;D)", seen in its raw_payload, not introduced by us).
+The collector now decodes them; the reclassify run fixes the stored rows.
 
 ## Turning it on (order matters)
 
@@ -125,3 +176,13 @@ and "기업마당 원문 보기" link.
    fills with errors until the migration is applied.
 4. After the first run: the log line `bizinfo job finished` should show `collected` ~1,450,
    `failed` 0, `complete` true, followed by `cross-source dedupe finished` (~17 marked).
+
+Steps 1-4 were done 2026-10-07. The filter change after it (`it_related`,
+`20261007120000_support_programs_it_related.sql`) has the same shape:
+
+1. `npx supabase db push` - before the web deploy (it selects `it_related`) **and** before
+   any worker restart (the collectors now write `it_related`; against the old schema every
+   upsert fails).
+2. `python -m worker.jobs.support_reclassify` - fills `it_related` and decodes K-Startup
+   entities for existing rows; until then "IT 관련만" shows nothing.
+3. Push to `master`, then `pm2 restart bizradar-worker`.

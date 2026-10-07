@@ -58,7 +58,10 @@ python supabase/tests/test_rls_phase1.py
 - `worker/dedupe/support_programs.py` - rule-based cross-source duplicate detection for
   `support_programs` (기업마당 rows repeating a K-Startup announcement get `duplicate_of`).
 - `worker/ai` - `AIProvider` interface (`base.py`), `OllamaProvider` (only
-  implementation), `rule_filter.py`, `schemas.py`.
+  implementation), `rule_filter.py`, `schemas.py`, `support_it_filter.py` (IT flag for
+  support programs - separate from the G2B rule filter on purpose).
+- `worker/jobs/support_reclassify.py` - run after changing any support-program rule or
+  collector text handling; stored rows don't re-derive themselves.
 - `worker/matching/engine.py` - deterministic rule-based Match Engine (not an LLM call).
 - `worker/jobs` - scheduled units (`g2b_job`, `analyze_job`, `match_job`, `digest_job`,
   `challenge_job`, etc.), wired up in `worker/scheduler/main.py`.

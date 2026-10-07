@@ -22,6 +22,7 @@ G2B, there's no lookback-window date filter to bound it otherwise).
 from __future__ import annotations
 
 import hashlib
+import html
 import json
 import logging
 from collections.abc import Iterable
@@ -32,6 +33,7 @@ import httpx
 from pydantic import BaseModel
 
 from worker.ai.investment_filter import is_investment_linked
+from worker.ai.support_it_filter import is_it_related
 from worker.collectors.base import BaseCollector, CollectorError, RawRecord
 from worker.config import Settings, get_settings
 
@@ -59,12 +61,22 @@ class KStartupNormalizedProgram(BaseModel):
     target: str | None = None
     recruiting: bool | None = None
     investment_linked: bool = False
+    it_related: bool = False
     application_start: datetime | None = None
     application_end: datetime | None = None
     description: str | None = None
     source_url: str | None = None
     content_hash: str
     raw_payload: dict[str, Any]
+
+
+def _text(value: Any) -> str | None:
+    # The API returns some fields HTML-escaped - found live 2026-10-07: 28 stored rows
+    # showed "&apos;" / "&amp;" on Support Radar ("기술개발(R&amp;D)", "&apos;성과기업 후속
+    # 지원&apos;"). Decoded once here; existing rows via worker/jobs/support_reclassify.py.
+    if not value:
+        return None
+    return html.unescape(str(value)).strip() or None
 
 
 def _parse_yn(value: Any) -> bool | None:
@@ -229,19 +241,20 @@ class KStartupCollector(BaseCollector[KStartupNormalizedProgram]):
 
     def normalize(self, raw: RawRecord) -> KStartupNormalizedProgram:
         item = raw.payload
-        title = (item.get("biz_pbanc_nm") or "").strip()
-        description = item.get("pbanc_ctnt") or None
+        title = _text(item.get("biz_pbanc_nm")) or ""
+        description = _text(item.get("pbanc_ctnt"))
         return KStartupNormalizedProgram(
             external_id=raw.external_id,
             title=title,
-            organization=item.get("pbanc_ntrp_nm") or None,
-            department=item.get("biz_prch_dprt_nm") or None,
-            supervising_type=item.get("sprv_inst") or None,
-            category=item.get("supt_biz_clsfc") or None,
-            region=item.get("supt_regin") or None,
-            target=item.get("aply_trgt") or None,
+            organization=_text(item.get("pbanc_ntrp_nm")),
+            department=_text(item.get("biz_prch_dprt_nm")),
+            supervising_type=_text(item.get("sprv_inst")),
+            category=_text(item.get("supt_biz_clsfc")),
+            region=_text(item.get("supt_regin")),
+            target=_text(item.get("aply_trgt")),
             recruiting=_parse_yn(item.get("rcrt_prgs_yn")),
             investment_linked=is_investment_linked(title, description),
+            it_related=is_it_related(title),
             application_start=_parse_date(item.get("pbanc_rcpt_bgng_dt")),
             application_end=_parse_date(item.get("pbanc_rcpt_end_dt")),
             description=description,

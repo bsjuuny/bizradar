@@ -40,6 +40,7 @@ import httpx
 from pydantic import BaseModel
 
 from worker.ai.investment_filter import is_investment_linked
+from worker.ai.support_it_filter import is_it_related
 from worker.collectors.base import BaseCollector, CollectorError, RawRecord
 from worker.config import Settings, get_settings
 
@@ -108,6 +109,7 @@ class BizInfoNormalizedProgram(BaseModel):
     target: str | None = None
     recruiting: bool | None = None
     investment_linked: bool = False
+    it_related: bool = False
     application_start: datetime | None = None
     application_end: datetime | None = None
     application_period_text: str | None = None
@@ -344,6 +346,7 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
             target=_field(item, "trgetNm") or None,
             recruiting=recruiting,
             investment_linked=is_investment_linked(title, description),
+            it_related=is_it_related(title),
             # Naive midnight, same convention as K-Startup's YYYYMMDD dates.
             application_start=datetime.combine(period[0], datetime.min.time()) if period else None,
             application_end=datetime.combine(period[1], datetime.min.time()) if period else None,
