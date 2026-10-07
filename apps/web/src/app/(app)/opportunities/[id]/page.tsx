@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { safeExternalUrl } from "@/lib/external-url";
 import { getOpportunity, getNoticeRevisionChanges, type NoticeChange } from "@/lib/opportunities";
 import { getOrganizationAwardHistory } from "@/lib/awards";
 import { formatCurrencyKRW, formatDate, formatDateTime } from "@/lib/format";
@@ -35,6 +36,7 @@ export default async function OpportunityDetailPage({
   const { from } = await searchParams;
   const opportunity = await getOpportunity(id);
   if (!opportunity) notFound();
+  const sourceUrl = safeExternalUrl(opportunity.source_url);
 
   const analysis = opportunity.analysis?.status === "SUCCESS" ? opportunity.analysis : null;
   const organizationWinners = opportunity.organization
@@ -281,9 +283,9 @@ export default async function OpportunityDetailPage({
         </section>
       )}
 
-      {opportunity.source_url && (
+      {sourceUrl && (
         <a
-          href={opportunity.source_url}
+          href={sourceUrl}
           target="_blank"
           rel="noopener noreferrer"
           className="w-fit rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted"

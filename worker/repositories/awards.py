@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from postgrest.types import JSON
+
 from worker.collectors.g2b_awards import G2BAwardResult
 from worker.repositories.opportunities import get_service_client
 
 
-def award_result_to_row(result: G2BAwardResult) -> dict[str, object]:
+def award_result_to_row(result: G2BAwardResult) -> dict[str, JSON]:
     return {
         "external_id": result.external_id,
         "bid_ntce_no": result.bid_ntce_no,

@@ -63,7 +63,7 @@ class _FakeQuery:
 
     def execute(self) -> _FakeResult:
         if self._table_name == "project_analyses":
-            rows = [
+            rows: list[dict[str, Any]] = [
                 {
                     "opportunity_id": oid,
                     "project_type": None,

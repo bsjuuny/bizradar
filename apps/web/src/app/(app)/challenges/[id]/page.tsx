@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getChallenge, safeExternalUrl, type PolicyStatus } from "@/lib/challenges";
+import { getChallenge, type PolicyStatus } from "@/lib/challenges";
+import { safeExternalUrl } from "@/lib/external-url";
 import { isChallengeEnabled } from "@/lib/features";
 import { formatCurrencyKRW, formatDate, formatDday } from "@/lib/format";
 import {

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getSupportProgram } from "@/lib/supportPrograms";
+import { safeExternalUrl } from "@/lib/external-url";
 import { formatDate } from "@/lib/format";
 import { formatSupportDeadline, supportSourceLabel } from "@/lib/support-display";
 import { InvestmentBadge } from "../investment-badge";
@@ -15,6 +16,7 @@ export default async function SupportProgramDetailPage({
   if (!program) notFound();
   // 기업마당 행의 department에는 담당부서가 아니라 소관기관(부처·광역지자체)이 들어 있다.
   const isBizinfo = program.source === "bizinfo";
+  const sourceUrl = safeExternalUrl(program.source_url);
 
   return (
     <div className="flex flex-col gap-6">
@@ -98,9 +100,9 @@ export default async function SupportProgramDetailPage({
         </section>
       )}
 
-      {program.source_url && (
+      {sourceUrl && (
         <a
-          href={program.source_url}
+          href={sourceUrl}
           target="_blank"
           rel="noopener noreferrer"
           className="w-fit rounded-lg border border-border px-4 py-2 text-sm hover:bg-muted"
