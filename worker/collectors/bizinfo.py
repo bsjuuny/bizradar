@@ -43,6 +43,7 @@ from worker.ai.support_it_filter import is_it_related
 from worker.collectors.base import (
     BaseCollector,
     CollectorError,
+    CollectorRunResult,
     RawRecord,
     clean_line,
     compute_content_hash,
@@ -66,6 +67,8 @@ MAX_RETRIES = 3
 # Seconds before retry 1, 2, ... after a transport error or 5xx - immediate retries of a
 # 5,000-item request just repeat the failure against a struggling server.
 RETRY_BACKOFF_SECONDS = (2.0, 5.0)
+# Changed rows per upsert request (see BizInfoCollector.run).
+UPSERT_CHUNK_SIZE = 100
 # Per-item fields that change without the announcement changing: the view counter, and the
 # list-wide total (shifts whenever any announcement is added or removed). Left out of
 # content_hash so it only moves when the posting itself does.
@@ -288,6 +291,7 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         # upserted (those carry a fresh last_seen_at already).
         self.unchanged = 0
         self.written: set[str] = set()
+        self._pending: list[BizInfoNormalizedProgram] = []
 
     def __enter__(self) -> BizInfoCollector:
         return self
@@ -453,16 +457,47 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
     def validate(self, normalized: BizInfoNormalizedProgram) -> bool:
         return bool(normalized.title)
 
-    def persist(self, normalized: BizInfoNormalizedProgram) -> None:
-        """Skips the upsert when the stored row has the same content_hash and recruiting
-        state - every open posting is in every hourly response, and nearly all of them are
-        unchanged. That turns ~1,450 single-row requests per run into a handful (the job
-        refreshes their last_seen_at in bulk, at most daily). content_hash includes the
-        derived columns (see
-        normalize()), so collector/rule changes still reach every listed row; closed rows
-        that are never re-sent need worker/jobs/support_reclassify.py."""
-        from worker.repositories.support_programs import upsert_bizinfo_program
+    def run(self) -> CollectorRunResult:
+        """BaseCollector.run, then the changed rows persist() queued go out in chunks of
+        UPSERT_CHUNK_SIZE - one request per chunk instead of per row. A rule or normalize()
+        change makes every listed row "changed" (content_hash covers the derived columns),
+        and ~1,450 single-row requests in one run is the burst that used to end in
+        WinError 10035. A chunk that fails is retried row by row, so one bad row costs only
+        itself; those rows are moved from persisted to failed."""
+        from worker.repositories.support_programs import upsert_bizinfo_programs
 
+        self._pending = []
+        result = super().run()
+        pending, self._pending = self._pending, []
+        for start in range(0, len(pending), UPSERT_CHUNK_SIZE):
+            chunk = pending[start : start + UPSERT_CHUNK_SIZE]
+            try:
+                upsert_bizinfo_programs(chunk)
+                self.written.update(normalized.external_id for normalized in chunk)
+                continue
+            except Exception:
+                logger.warning("bizinfo: chunk upsert failed, retrying row by row", exc_info=True)
+            for normalized in chunk:
+                try:
+                    upsert_bizinfo_programs([normalized])
+                    self.written.add(normalized.external_id)
+                except Exception as exc:  # noqa: BLE001 - isolate per-record failures
+                    result.persisted -= 1
+                    result.failed += 1
+                    result.errors.append(f"{normalized.external_id}: {self._mask(str(exc))}")
+                    logger.warning(
+                        "collector record failed",
+                        extra={"source": self.source, "external_id": normalized.external_id},
+                    )
+        return result
+
+    def persist(self, normalized: BizInfoNormalizedProgram) -> None:
+        """Queues the row for run() to write, unless the stored row has the same
+        content_hash and recruiting state - every open posting is in every hourly response,
+        and nearly all of them are unchanged (the job refreshes their last_seen_at in bulk,
+        at most daily). content_hash includes the derived columns (see normalize()), so
+        collector/rule changes still reach every listed row; closed rows that are never
+        re-sent need worker/jobs/support_reclassify.py."""
         stored = self._stored.get(normalized.external_id) if self._stored is not None else None
         if (
             stored is not None
@@ -471,5 +506,4 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         ):
             self.unchanged += 1
             return
-        upsert_bizinfo_program(normalized)
-        self.written.add(normalized.external_id)
+        self._pending.append(normalized)

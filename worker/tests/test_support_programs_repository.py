@@ -116,11 +116,17 @@ def test_bizinfo_upsert_records_the_row_as_seen(client):
         external_id="PBLN_1", title="t", content_hash="h", raw_payload={}
     )
 
-    support_programs.upsert_bizinfo_program(normalized)
+    support_programs.upsert_bizinfo_programs(
+        [normalized, normalized.model_copy(update={"external_id": "PBLN_2"})]
+    )
 
-    (request,) = client.requests
+    (request,) = client.requests  # one request for both
     assert request["op"] == "upsert"
-    assert request["values"]["last_seen_at"]
+    assert request["on_conflict"] == "source,external_id"
+    assert [row["external_id"] for row in request["values"]] == ["PBLN_1", "PBLN_2"]
+    assert all(row["last_seen_at"] for row in request["values"])
+    # A multi-row upsert needs the same keys on every row.
+    assert len({tuple(sorted(row)) for row in request["values"]}) == 1
 
 
 def test_bulk_updates_are_chunked(client):
@@ -136,16 +142,20 @@ def test_last_seen_intervals_agree_with_the_sql_rule():
     # is_open() (SQL) closes a date-less 기업마당 row after N days unseen; the worker only
     # rewrites last_seen_at once it is LAST_SEEN_REFRESH_AFTER old. If N dropped to near
     # the refresh interval, listed rows would flicker out of 모집 중 between refreshes.
-    # Reads the newest migration that defines is_open, so a later change can't skip this.
+    # Reads the newest migration that defines is_open, so a later change can't skip this -
+    # however it is spelled (schema prefix, spacing, days or hours).
     migrations = sorted(
         (Path(__file__).resolve().parents[2] / "supabase" / "migrations").glob("*.sql")
     )
-    defining = [m for m in migrations if "function is_open(" in m.read_text(encoding="utf-8")]
+    defines_is_open = re.compile(r"function\s+(?:public\.)?is_open\s*\(", re.IGNORECASE)
+    defining = [m for m in migrations if defines_is_open.search(m.read_text(encoding="utf-8"))]
     sql = defining[-1].read_text(encoding="utf-8")
-    body = sql[sql.index("function is_open(") :]
-    days = int(re.search(r"last_seen_at >= now\(\) - interval '(\d+) days'", body).group(1))
+    body = sql[defines_is_open.search(sql).start() :]
+    window = re.search(r"last_seen_at\s*>=\s*now\(\)\s*-\s*interval\s*'(\d+)\s*(day|hour)s?'", body)
+    assert window, f"no last_seen_at interval found in {defining[-1].name} - update this test"
+    amount, unit = int(window.group(1)), window.group(2)
+    stale_after = timedelta(days=amount) if unit == "day" else timedelta(hours=amount)
 
-    stale_after = timedelta(days=days)
     hourly_run = timedelta(hours=1)
     assert stale_after >= 2 * support_programs.LAST_SEEN_REFRESH_AFTER + hourly_run
     # The state read must include every listed row, refreshed or not yet.

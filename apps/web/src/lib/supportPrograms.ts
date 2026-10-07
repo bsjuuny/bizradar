@@ -24,7 +24,8 @@ export type SupportProgramSummary = {
   recruiting: boolean | null;
   /**
    * is_open(support_programs) in SQL - the one definition of 모집 중. null = unknown: the
-   * source gave neither a 모집 status nor a deadline (shown as "—", never as 마감).
+   * source gave neither a 모집 status nor a deadline - 모집상태 "—", deadline column the
+   * 신청기간 text or "일정 미정", never 마감 (formatSupportDeadline).
    */
   is_open: boolean | null;
   investment_linked: boolean;

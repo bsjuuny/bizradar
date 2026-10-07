@@ -25,8 +25,8 @@ export function parseSupportSource(value: string | null | undefined): SupportSou
  *   (supabase/migrations/20261008100000_support_programs_open_status.sql)이 유일한 정의다.
  *   행 자기 값만 본다 - 중복 짝은 상태를 바꾸지 않는다.
  *   마감일 조건까지 거는 이유는 K-Startup의 모집 여부 플래그가 마감일보다 늦게 바뀌는
- *   경우가 있어서다(16건 실측). 기업마당 공고는 3일 넘게 목록에서 보이지 않으면 마감이다 -
- *   날짜 없는 공고는 목록에서 내려가는 것 말고는 마감될 길이 없다.
+ *   경우가 있어서다(16건 실측). 날짜 없는 기업마당 공고는 3일 넘게 목록에서 보이지 않으면
+ *   마감이다 - 목록에서 내려가는 것 말고는 마감될 길이 없다. 날짜 있는 공고는 날짜로 닫힌다.
  * - closing: open 중 마감일이 오늘부터 CLOSING_SOON_DAYS일 안. 날짜 없는 공고는 빠진다.
  * - all: 마감 포함 전부.
  */

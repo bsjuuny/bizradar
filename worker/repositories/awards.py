@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
-from postgrest.types import JSON
+from typing import TYPE_CHECKING
 
 from worker.collectors.g2b_awards import G2BAwardResult
 from worker.repositories.opportunities import get_service_client
+
+if TYPE_CHECKING:
+    # Annotation only (postponed by the __future__ import): older postgrest releases
+    # within the declared supabase range don't export it.
+    from postgrest.types import JSON
 
 
 def award_result_to_row(result: G2BAwardResult) -> dict[str, JSON]:

@@ -97,10 +97,10 @@ def collect() -> None:
             "status": "ok" if result.failed == 0 else "partial",
             "duration": (datetime.now(UTC) - started_at).total_seconds(),
             "collected": result.collected,
-            # persisted counts every record persist() accepted, written or skipped as
-            # unchanged; written is what actually went to the database.
+            # persisted counts every record accepted, written or skipped as unchanged;
+            # written is what actually went to the database.
             "persisted": result.persisted,
-            "written": result.persisted - unchanged,
+            "written": len(collector.written),
             "unchanged": unchanged,
             "failed": result.failed,
             "complete": collector.complete,

@@ -65,7 +65,9 @@ matched with the rule in "Dedupe" below.
   recruiting)` once per run - for rows still recruiting or seen in the last 2 days, not the
   ever-growing closed history - and hands it to the collector (if that read fails, every
   row is written) and to the closing step. A posting that matches is skipped - nearly all
-  of the ~1,450 are, every hour. Listed rows get their `last_seen_at` refreshed in chunks
+  of the ~1,450 are, every hour - and the changed ones are upserted 100 per request
+  (`BizInfoCollector.run`; a failing chunk is retried row by row), so even a rule change
+  that touches every listed row is ~15 requests. Listed rows get their `last_seen_at` refreshed in chunks
   of 100 once it is a day old (not hourly: every update also bumps `updated_at` and leaves
   a dead tuple), whatever `persist()` did with them - a row whose upsert keeps failing is
   still listed. `content_hash` covers the stable payload *and*
@@ -198,16 +200,19 @@ paired copies, orders and pages in one place:
    `raw_payload`/`description`). Bad arguments (an unknown status, a page size outside
    1-100, a negative offset or window) raise an error rather than quietly returning
    something else - any signed-in user can call the RPC directly.
-2. `visible`: a pair is hidden down to one row only when both of its rows are *in
-   `filtered`* - then the original (K-Startup) stands for it, unless only the copy is
-   open, in which case the copy does. Checked against `filtered` itself, not
-   approximated: NULL columns on the original, or filters added later, can't make a
-   program vanish (an earlier version re-applied each filter to copied `original_*`
-   columns by hand, and a NULL there hid the copy with no original listed). With a 출처
-   filter the two are never both in `filtered`, so nothing is hidden. Evaluated per
+2. `visible`: an original and its copies (more than one is possible - a 공고 and its
+   재공고 both repeating one K-Startup posting, seen once on 2026-10-08) form a group, and
+   the rows of a group that are *in `filtered`* show as one: open rows first, then the
+   original, then the lowest id. So both open -> the original; only a copy open -> that
+   copy; all closed -> the original. Checked against `filtered` itself, not approximated:
+   NULL columns on the original, or filters added later, can't make a program vanish (an
+   earlier version re-applied each filter to copied `original_*` columns by hand, and a
+   NULL there hid the copy with no original listed). With a 출처 filter only one side is
+   in `filtered` (copies of the same original still collapse to one). Evaluated per
    query: under 모집 중 a copy shows as soon as its original closes, and under "마감 포함
-   전체" the same row - the open one - stands for the pair, so the views agree.
-3. Order: open first; open ones by nearest deadline (no deadline last); closed ones most
+   전체" the same row - the open one - stands for the group, so the views agree.
+3. Order: open first, by nearest deadline (no deadline last); then unknown status
+   (could still be open - not buried under the closed history); then closed, most
    recently closed first.
 4. Search is `strpos(lower(...))`, not LIKE - `%`, `_`, `*` are just characters.
 
@@ -217,7 +222,8 @@ PostgREST computed column): the source says recruiting (or doesn't say, and give
 deadline), and there is no deadline or it hasn't passed (Asia/Seoul,
 `support_program_today_utc()`). One definition, so they can't drift. Each row's own data
 only - pairing doesn't enter it (see Dedupe). With neither a 모집 status nor a deadline the answer
-is NULL (unknown): not in 모집 중, shown as "—" / the 신청기간 text, never as 마감 (no
+is NULL (unknown): not in 모집 중; the detail page's 모집상태 shows "—" and the deadline
+column the 신청기간 text or "일정 미정" - never 마감 (no
 such K-Startup row on 2026-10-08, but `_parse_yn` returns None for unknown values).
 
 One more condition, for date-less rows whose source is a list of what is posted right

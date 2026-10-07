@@ -4,17 +4,23 @@
 -- 1. is_open(support_programs): 행 자기 값만 본다 - 중복 짝(duplicate_of)은 상태를 바꾸지
 --    않는다. 짝짓기는 제목 유사도로 하는 추정이라, 그게 틀렸을 때 기업마당이 모집 중이라고
 --    올려 둔 공고를 "마감"으로 만들면 안 된다(놓친 기회가 중복 한 줄보다 비싸다).
---    a. 모집 여부도 마감일도 없으면 NULL(모름) - "마감"이라고 단정하지 않는다. 화면은
---       "—"(또는 신청기간 문장)로 보이고, 모집 중 목록에는 들지 않는다.
+--    a. 모집 여부도 마감일도 없으면 NULL(모름) - "마감"이라고 단정하지 않는다. 상세의
+--       모집상태는 "—", 마감 칸은 신청기간 문장이나 "일정 미정"이고, 모집 중 목록에는 들지
+--       않는다.
 --    b. "3일 넘게 목록에 없으면 마감"은 날짜 없는 행에만 적용한다. 그 규칙은 마감 처리가
 --       멈췄을 때(키 만료, 계속 불완전한 응답) 날짜로는 영원히 닫히지 않는 공고를 위한
 --       것이고, 날짜가 있는 공고는 날짜로 닫힌다 - 워커 PC가 사흘 꺼져 있었다고 마감일이
---       몇 주 남은 공고가 "마감"으로 보이면 안 된다.
--- 2. list_support_programs의 중복 숨김: 짝이 둘 다 결과에 있으면 원본(K-Startup)을 보이고
---    사본을 숨긴다 - 단, 사본만 모집 중이면 사본을 보이고 원본을 숨긴다. 그래서 어느 보기
---    (모집 중 / 마감 포함 전체)에서든 짝은 한 줄이고, 그 줄의 상태가 보기마다 다르지 않다.
---    워커는 마감된 짝도 짝으로 둔다(worker/dedupe/support_programs.py plan_duplicate_marks).
--- 3. list_support_programs: 모집 여부를 모르는 공고(NULL)는 마감된 공고와 함께 뒤로 간다.
+--       몇 주 남은 공고가 "마감"으로 보이면 안 된다. K-Startup은 last_seen_at을 추적하지
+--       않는다(NULL) - 2026-10-08 실측 저장된 1,072건 모두 마감일이 있어 날짜로 닫힌다.
+-- 2. list_support_programs의 중복 숨김: 원본(K-Startup)과 그 사본들(duplicate_of가 원본을
+--    가리키는 기업마당 행 - 공고와 재공고처럼 둘 이상일 수 있다, 2026-10-08 실측 1건)은 한
+--    묶음이고, 결과에 든 묶음은 한 줄로 보인다: 모집 중인 행이 먼저, 그 안에서 원본이
+--    먼저. 원본과 사본이 둘 다 모집 중이면 원본, 사본만 모집 중이면 그 사본, 둘 다 마감이면
+--    원본. 그래서 어느 보기(모집 중 / 마감 포함 전체)에서든 한 프로그램은 한 줄이고, 그
+--    줄의 상태가 보기마다 다르지 않다. 워커는 마감된 짝도 짝으로 둔다
+--    (worker/dedupe/support_programs.py plan_duplicate_marks).
+-- 3. list_support_programs: 모집 여부를 모르는 공고(NULL)는 모집 중인 공고 다음, 마감된
+--    공고 앞에 온다 - 아직 모집 중일 수도 있어서 마감 이력 맨 끝에 묻히면 안 된다.
 --    open/closing에서는 is_open을 계산하기 전에 그 필요조건(마감이라고 하지 않았고 마감일이
 --    지나지 않음)으로 먼저 거른다 - 정의는 여전히 is_open 하나이고, 마감된 이력(매달 ~1,500건씩
 --    쌓인다)에 is_open을 계산하지 않으려는 것뿐이다. "마감 포함 전체"는 전체를 센다 - 2026-10-08
@@ -116,33 +122,28 @@ create or replace function list_support_programs(
             )
           )
       ),
-      visible as (
-        select f.*
+      grouped as (
+        -- One row per original and its copies (see the header): open rows first, then
+        -- the original, then the lowest id.
+        select
+          f.*,
+          row_number() over (
+            partition by coalesce(f.duplicate_of, f.id)
+            order by (f.is_open is true) desc, (f.duplicate_of is null) desc, f.id
+          ) as rank_in_group
         from filtered f
-        -- f is a copy whose original is listed too: the original stands for the pair,
-        -- unless only the copy is open.
-        where not exists (
-            select 1
-            from filtered o
-            where o.id = f.duplicate_of
-              and (o.is_open is true or f.is_open is not true)
-          )
-          -- f is an original with a listed copy that is open while f isn't: the copy
-          -- stands for the pair.
-          and not exists (
-            select 1
-            from filtered c
-            where c.duplicate_of = f.id
-              and c.is_open is true
-              and f.is_open is not true
-          )
+      ),
+      visible as (
+        select g.*
+        from grouped g
+        where g.rank_in_group = 1
       ),
       ordered as (
         select
           v.*,
           row_number() over (
             order by
-              v.is_open desc nulls last,
+              case when v.is_open then 0 when v.is_open is null then 1 else 2 end,
               case when v.is_open then v.application_end end asc nulls last,
               v.application_end desc nulls last,
               v.id

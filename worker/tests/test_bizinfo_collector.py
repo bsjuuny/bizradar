@@ -417,7 +417,7 @@ def test_run_persists_every_record_through_repository(monkeypatch):
     # No stored state given (None: unknown) -> every row is written.
     persisted = []
     monkeypatch.setattr(
-        "worker.repositories.support_programs.upsert_bizinfo_program", persisted.append
+        "worker.repositories.support_programs.upsert_bizinfo_programs", persisted.extend
     )
     collector = _collector(lambda request: httpx.Response(200, text=_fixture_text()))
 
@@ -442,7 +442,7 @@ def test_unchanged_rows_are_not_resent(monkeypatch):
     }
     persisted = []
     monkeypatch.setattr(
-        "worker.repositories.support_programs.upsert_bizinfo_program", persisted.append
+        "worker.repositories.support_programs.upsert_bizinfo_programs", persisted.extend
     )
     collector = _collector(lambda request: httpx.Response(200, text=_fixture_text()), stored=stored)
 
@@ -461,7 +461,7 @@ def test_listed_row_past_its_deadline_is_closed_once_then_skipped(monkeypatch):
     assert normalized.recruiting is False
     persisted = []
     monkeypatch.setattr(
-        "worker.repositories.support_programs.upsert_bizinfo_program", persisted.append
+        "worker.repositories.support_programs.upsert_bizinfo_programs", persisted.extend
     )
 
     def run_with(recruiting: bool) -> None:
@@ -480,6 +480,43 @@ def test_listed_row_past_its_deadline_is_closed_once_then_skipped(monkeypatch):
     # recently seen rows so this case is recognized).
     run_with(recruiting=False)
     assert len(persisted) == 1
+
+
+def test_changed_rows_are_written_in_chunks(monkeypatch):
+    requests = []
+    monkeypatch.setattr(
+        "worker.repositories.support_programs.upsert_bizinfo_programs",
+        lambda programs: requests.append([p.external_id for p in programs]),
+    )
+    monkeypatch.setattr("worker.collectors.bizinfo.UPSERT_CHUNK_SIZE", 2)
+    collector = _collector(lambda request: httpx.Response(200, text=_fixture_text()))
+
+    result = collector.run()
+
+    assert [len(chunk) for chunk in requests] == [2, 2, 1]
+    assert result.persisted == 5 and result.failed == 0
+    assert collector.written == {external_id for chunk in requests for external_id in chunk}
+
+
+def test_a_failing_chunk_is_retried_row_by_row(monkeypatch):
+    items = extract_items(_fixture_text())
+    bad = _collector().normalize(_raw(items[1])).external_id
+    written = []
+
+    def upsert(programs):
+        if any(p.external_id == bad for p in programs):
+            raise RuntimeError("row rejected")
+        written.extend(p.external_id for p in programs)
+
+    monkeypatch.setattr("worker.repositories.support_programs.upsert_bizinfo_programs", upsert)
+    collector = _collector(lambda request: httpx.Response(200, text=_fixture_text()))
+
+    result = collector.run()
+
+    assert len(written) == 4 and bad not in written
+    assert result.persisted == 4 and result.failed == 1
+    assert result.errors[0].startswith(bad)
+    assert bad not in collector.written  # so the job still refreshes it as seen
 
 
 def test_source_url_must_be_an_http_url_on_bizinfo():

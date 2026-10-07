@@ -57,13 +57,19 @@ def upsert_support_program(normalized: KStartupNormalizedProgram) -> None:
     client.table("support_programs").upsert(row, on_conflict="source,external_id").execute()
 
 
-def upsert_bizinfo_program(normalized: BizInfoNormalizedProgram) -> None:
+def upsert_bizinfo_programs(programs: Sequence[BizInfoNormalizedProgram]) -> None:
+    """One request for all of `programs` (callers chunk them). Every row has the same keys,
+    as a multi-row upsert requires."""
     client = get_service_client()
-    row = _common_row("bizinfo", normalized)
-    row["application_period_text"] = normalized.application_period_text
-    # Only ever written for a posting that is in the response being persisted.
-    row["last_seen_at"] = datetime.now(UTC).isoformat()
-    client.table("support_programs").upsert(row, on_conflict="source,external_id").execute()
+    # Only ever written for postings that are in the response being persisted.
+    seen_at = datetime.now(UTC).isoformat()
+    rows = []
+    for normalized in programs:
+        row = _common_row("bizinfo", normalized)
+        row["application_period_text"] = normalized.application_period_text
+        row["last_seen_at"] = seen_at
+        rows.append(row)
+    client.table("support_programs").upsert(rows, on_conflict="source,external_id").execute()
 
 
 def _read_all(table: str, columns: str, narrow: Callable[[Any], Any]) -> list[dict[str, Any]]:

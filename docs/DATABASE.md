@@ -137,9 +137,9 @@ Implemented (Phase 1):
   it.
 - `list_support_programs(p_status, p_it_only, p_investment_only, p_source, p_categories,
   p_term, p_closing_days, p_limit, p_offset)` (PL/pgSQL, `security invoker`, returns
-  `{total, items}`) - the Support Radar list. Filters every row, then shows a pair as
-  one row only when both are in the same filtered set (the original, unless only the
-  copy is open), orders and pages; rejects unknown
+  `{total, items}`) - the Support Radar list. Filters every row, then shows an original
+  and its copies that are in the same filtered set as one row (an open one first, the
+  original first among equals), orders and pages; rejects unknown
   statuses and out-of-range paging. Any other reader listing programs should go through
   it rather than re-implement the copy rule.
 
