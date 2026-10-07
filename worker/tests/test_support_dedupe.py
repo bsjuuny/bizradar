@@ -167,3 +167,14 @@ def test_plan_updates_only_returns_changes():
 
 def test_plan_updates_clears_marks_that_no_longer_hold():
     assert plan_updates({"a": "ks-1"}, {}) == {"a": None}
+
+
+def test_hangul_and_latin_middle_dots_normalize_the_same():
+    # 'ㆍ' (U+318D) is a Hangul letter to the regex engine, '·' (U+00B7) punctuation.
+    assert normalize_title("원전ㆍ에너지ㆍ수소 창업ㆍ벤처") == normalize_title(
+        "원전·에너지·수소 창업·벤처"
+    )
+    assert is_same_program(
+        _p("[경북] 2026년 원전ㆍ에너지ㆍ수소 창업ㆍ벤처 지원사업 모집 공고", None),
+        _p("2026년 원전·에너지·수소 창업·벤처 지원사업 모집", date(2026, 11, 1)),
+    )

@@ -54,7 +54,11 @@ logger = logging.getLogger("bizradar.worker")
 def build_scheduler() -> BlockingScheduler:
     return BlockingScheduler(
         timezone="Asia/Seoul",
-        executors={"default": ThreadPoolExecutor(5)},
+        # Interval jobs share the start time, so at every hour g2b, kstartup, bizinfo,
+        # analyze and match fire together (+ g2b-award every 6h, challenge jobs). APScheduler
+        # checks misfire_grace_time when a queued job actually starts, so with too few
+        # threads the one left waiting >60s behind long runs is skipped as "missed".
+        executors={"default": ThreadPoolExecutor(10)},
         job_defaults={
             "max_instances": 1,
             "coalesce": True,

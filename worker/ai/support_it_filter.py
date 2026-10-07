@@ -20,13 +20,15 @@ of its keywords mean something else in support-program titles. Measured 2026-10-
 Titles only, not descriptions: a long 사업개요 mentions "온라인 접수" or "데이터" in passing,
 so it would add noise faster than recall.
 
-A trailing parenthetical is ignored: 기업마당 appends the funding project there, and that
-name can be IT-sounding when the program isn't - "의료기기 부품ㆍ모듈 국산화 및 기술개발
-지원사업 공고(AI 빅데이터 기반 의료바이오 첨단기기 연구제조센터 구축사업)" is support for
-medical-device makers. Programs whose own name is IT keep matching on the main title, and
-a parenthetical that names an IT-industry program is kept (_IT_INDUSTRY_PROGRAM).
+A trailing parenthetical naming a funding project ("...사업", "...구축") is ignored:
+기업마당 appends the funding project there, and that name can be IT-sounding when the
+program isn't - "의료기기 부품ㆍ모듈 국산화 및 기술개발 지원사업 공고(AI 빅데이터 기반
+의료바이오 첨단기기 연구제조센터 구축사업)" is support for medical-device makers. Other
+trailing parentheticals count - K-Startup puts the field there: "...참여기업 모집 공고(AI
+분야)", "(1회차: AI·빅데이터)". One that names an IT-industry program is kept regardless
+(_IT_INDUSTRY_PROGRAM).
 
-Result on that data: 154 of 1,599 open programs. Every hit was read (no false positive
+Result on that data: 155 of 1,599 open programs. Every hit was read (no false positive
 of the IoT-sensor / 홈쇼핑 kind; a few are AI-flavoured programs for other industries, e.g.
 "AI 기반 공조부품 성능평가", kept because AI is their subject), then the 308 non-hits
 containing weaker words (디지털·플랫폼·스마트·기술·온라인 ...) were read for misses - the
@@ -36,8 +38,9 @@ closed K-Startup programs were read too. Tests: worker/tests/test_support_it_fil
 
 from __future__ import annotations
 
-import html
 import re
+
+from worker.collectors.base import decode_entities
 
 # Latin keywords need ASCII boundaries so "AI" doesn't match inside "MAIN" or "SAINT";
 # Hangul next to them is fine ("AI훈련확산센터", "SW개발자").
@@ -92,9 +95,12 @@ _IT_PATTERNS = [
 ]
 _IT = re.compile("|".join(f"(?:{pattern})" for pattern in _IT_PATTERNS))
 
-# A trailing parenthetical that itself names an IT-industry program is kept - e.g.
-# "지역선도기업사업화지원 공고(지역디지털기업성장지원사업)" is for IT companies even though
-# the main title says nothing about IT.
+# Only a trailing parenthetical that names a funding project or facility build-out is
+# dropped ("...사업", "...구축"); a field marker like "(AI 분야)" stays. And one that names
+# an IT-industry program is kept even so - "지역선도기업사업화지원 공고
+# (지역디지털기업성장지원사업)" is for IT companies though the main title says nothing
+# about IT.
+_FUNDING_PROJECT = re.compile(r"사업|구축")
 _IT_INDUSTRY_PROGRAM = re.compile(r"디지털기업|소프트웨어|정보보호|ICT|(?<![A-Za-z])SW(?![A-Za-z])")
 
 # Removed from the title before matching - each a confirmed non-IT hit in the measurement.
@@ -107,15 +113,22 @@ _EXCEPTIONS = [
     "산업보안",
     # Street/security lighting, same exception as the G2B filter.
     "보안등",
+    # Policy buzzword ("게임체인저 기업 육성"), not the game industry.
+    "게임체인저",
+    "게임 체인저",
 ]
 
 _TRAILING_PARENTHETICAL = re.compile(r"\([^()]*\)\s*$")
 
 
 def is_it_related(title: str) -> bool:
-    text = html.unescape(title)
+    text = decode_entities(title)
     trailing = _TRAILING_PARENTHETICAL.search(text)
-    if trailing and not _IT_INDUSTRY_PROGRAM.search(trailing.group()):
+    if (
+        trailing
+        and _FUNDING_PROJECT.search(trailing.group())
+        and not _IT_INDUSTRY_PROGRAM.search(trailing.group())
+    ):
         text = text[: trailing.start()]
     for phrase in _EXCEPTIONS:
         text = text.replace(phrase, " ")

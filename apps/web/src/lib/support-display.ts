@@ -73,18 +73,6 @@ export function parseSupportField(value: string | null | undefined): SupportFiel
   return SUPPORT_FIELDS.find((field) => field.key === value);
 }
 
-/** Asia/Seoul 달력 기준 오늘(+offsetDays)을 "YYYY-MM-DD"로. application_end와 비교하는 값. */
-export function seoulDateKey(now: Date = new Date(), offsetDays = 0): string {
-  const today = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
-  const shifted = new Date(Date.parse(`${today}T00:00:00Z`) + offsetDays * 86_400_000);
-  return shifted.toISOString().slice(0, 10);
-}
-
 /**
  * 마감 칸 표시. 기업마당 공고의 대부분(2026-10-07 기준 65%)은 신청기간이 날짜가 아니라
  * "예산 소진시까지"·"상시 접수" 같은 문장이라 마감일이 비어 있다. 그걸 "일정 미정"으로

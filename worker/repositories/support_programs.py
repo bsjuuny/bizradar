@@ -97,13 +97,19 @@ def _to_date(value: str | None) -> date | None:
 
 
 def fetch_open_kstartup_titles(today: date) -> list[ProgramTitle]:
+    """K-Startup rows that Support Radar's default "모집 중" view shows: recruiting and no
+    deadline or one not yet passed - the same definition as getSupportPrograms() in
+    apps/web/src/lib/supportPrograms.ts. It has to be the same: a 기업마당 copy is hidden in
+    favour of its K-Startup row, so if the K-Startup row weren't visible in that view, the
+    program would vanish from it entirely."""
     client = get_service_client()
     rows = _select_all(
         lambda: (
             client.table("support_programs")
-            .select("id, title, application_end, recruiting")
+            .select("id, title, application_end")
             .eq("source", "kstartup")
-            .or_(f"application_end.gte.{today.isoformat()},recruiting.eq.true")
+            .eq("recruiting", True)
+            .or_(f"application_end.is.null,application_end.gte.{today.isoformat()}")
             .order("id")
         )
     )

@@ -104,21 +104,28 @@ Implemented (Phase 1):
   only (not public like `opportunities`/`project_analyses` - a match score is specific
   to one company's fit, not general-purpose data). See
   `docs/DATA_PIPELINE.md#match-engine`.
-- `support_programs` - RAW/NORMALIZED K-Startup 사업공고 (`source` is always
-  `'kstartup'` - BizInfo lands separately later under the same table, not a new one).
-  `title`, `organization`, `department`, `supervising_type` (민간/공공기관/교육기관/
-  지자체), `category` (조달분류 아님, K-Startup's own `supt_biz_clsfc`), `region`,
-  `target`, `recruiting` (nullable Y/N), `application_start`/`application_end`,
-  `description`, `source_url`, plus `raw_payload` and `content_hash`. Unique on
-  `(source, external_id)`. `investment_linked` (TIPS/엔젤투자/etc, rule-filter
-  classification, default `false`) - see
+- `support_programs` - RAW/NORMALIZED 지원사업 공고 from two sources, `source in
+  ('kstartup', 'bizinfo')` (기업마당 since 2026-10-07, same table). `title`,
+  `organization`, `department` (K-Startup: 담당부서; 기업마당: 소관기관), `supervising_type`
+  (K-Startup only: 민간/공공기관/교육기관/지자체), `category` (조달분류 아님 - each source's
+  own taxonomy; the web maps both onto shared 지원분야 groups), `region`, `target`,
+  `recruiting` (nullable), `application_start`/`application_end`,
+  `application_period_text` (기업마당's 신청기간 as written - 65% are phrases like "예산
+  소진시까지" with no dates), `description`, `source_url`, plus `raw_payload` and
+  `content_hash`. Unique on `(source, external_id)`. Rule-filter flags computed at
+  collection, default `false`: `investment_linked` (TIPS/엔젤투자/etc) and `it_related`
+  (`worker/ai/support_it_filter.py`) - changing either rule needs
+  `python -m worker.jobs.support_reclassify`. `duplicate_of` (nullable FK to
+  `support_programs.id`, never itself): set by the worker on a 기업마당 row that repeats an
+  open K-Startup announcement; readers listing programs must filter `duplicate_of is
+  null`. See `docs/SUPPORT_PROGRAMS.md` and
   `docs/DATA_PIPELINE.md#support-programs-k-startup-implemented-2026-08-10`. RLS: any
   authenticated user can `select`; only `service_role` writes - same pattern as
   `opportunities`.
 
 Planned (later phases, see `docs/MVP_SCOPE.md`):
 
-- BizInfo half of `support_programs` + eligibility status computation. (Phase 6, remainder)
+- Support-program eligibility status computation. (Phase 6, remainder)
 - `saved_opportunities`, `watch_conditions` - per-company user state. (Phase 8)
 
 ## Gotchas hit while implementing Phase 1 (see `docs/TROUBLESHOOTING.md` for full detail)

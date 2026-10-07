@@ -37,7 +37,10 @@ OVERLAP_WITHOUT_DEADLINE = 0.9
 JACCARD_WITHOUT_DEADLINE = 0.65
 
 _LEADING_TAGS = re.compile(r"^\s*(\[[^\]]*\]\s*)+")
-_NON_WORD = re.compile(r"[\s\W_]+")
+# "\W" misses 기업마당's favourite middle dot: 'ㆍ' (U+318D) is a Hangul letter (category
+# Lo), unlike '·' (U+00B7, Po). Without this "원전ㆍ에너지" and "원전·에너지" normalize
+# differently.
+_NON_WORD = re.compile(r"[\s\W_ㆍ]+")
 _TRAILING_NOTICE = re.compile(r"(재|수정|변경|연장)?공고(문)?$")
 _NUMBERS = re.compile(r"\d+")
 

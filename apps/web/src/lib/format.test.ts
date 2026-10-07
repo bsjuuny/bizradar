@@ -1,5 +1,23 @@
 import { describe, expect, it } from "vitest";
-import { formatCurrencyKRW, formatDate, formatDateTime, formatDday } from "./format";
+import {
+  formatCurrencyKRW,
+  formatDate,
+  formatDateTime,
+  formatDday,
+  seoulDateKey,
+} from "./format";
+
+describe("seoulDateKey", () => {
+  it("uses the Seoul calendar day", () => {
+    // 2026-10-07 23:30 UTC is already 2026-10-08 in Seoul.
+    expect(seoulDateKey(new Date("2026-10-07T23:30:00Z"))).toBe("2026-10-08");
+    expect(seoulDateKey(new Date("2026-10-07T03:00:00Z"))).toBe("2026-10-07");
+  });
+
+  it("shifts by whole days across month ends", () => {
+    expect(seoulDateKey(new Date("2026-10-28T03:00:00Z"), 7)).toBe("2026-11-04");
+  });
+});
 
 describe("formatCurrencyKRW", () => {
   it("formats a number with thousands separators and 원 suffix", () => {

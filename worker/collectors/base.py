@@ -9,7 +9,11 @@ instead of raised.
 
 from __future__ import annotations
 
+import hashlib
+import html
+import json
 import logging
+import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from datetime import datetime
@@ -18,6 +22,20 @@ from typing import Any
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
+
+_ENTITY = re.compile(r"&(?:#\d+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);")
+
+
+def compute_content_hash(payload: dict[str, Any]) -> str:
+    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def decode_entities(text: str) -> str:
+    """Decode HTML character references - only the ';'-terminated ones. html.unescape on
+    its own also expands legacy references with no ';' (HTML5 parsing rules), so it turns
+    a query string like "?schM=view&notice=1" into "?schM=view¬ice=1"."""
+    return _ENTITY.sub(lambda match: html.unescape(match.group()), text)
 
 
 class CollectorError(Exception):

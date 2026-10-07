@@ -14,8 +14,9 @@ handling:
 
 - K-Startup rows: normalize() is re-run on the stored raw_payload, so every derived column
   (DERIVED_COLUMNS) comes out exactly as a fresh collection would write it.
-- BizInfo rows: only it_related, from the stored title. Their text columns are already
-  decoded at collection, and BizInfo re-sends every open announcement each hour anyway.
+- BizInfo rows: it_related and investment_linked, from the stored title/description.
+  Their text columns are already decoded at collection. (Open announcements are re-sent
+  every hour anyway; this matters for the ones that closed and won't be.)
 Only changed columns of changed rows are written. Recruiting state, dates and
 duplicate_of are never touched.
 """
@@ -29,6 +30,7 @@ from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Any
 
+from worker.ai.investment_filter import is_investment_linked
 from worker.ai.support_it_filter import is_it_related
 from worker.collectors.base import RawRecord
 from worker.collectors.kstartup import KStartupCollector
@@ -51,8 +53,11 @@ def kstartup_changes(row: Mapping[str, Any], collector: KStartupCollector) -> di
 
 
 def bizinfo_changes(row: Mapping[str, Any]) -> dict[str, Any]:
-    wanted = is_it_related(row["title"])
-    return {"it_related": wanted} if row.get("it_related") != wanted else {}
+    wanted = {
+        "it_related": is_it_related(row["title"]),
+        "investment_linked": is_investment_linked(row["title"], row.get("description")),
+    }
+    return {column: value for column, value in wanted.items() if row.get(column) != value}
 
 
 def run(dry_run: bool = False) -> Counter[str]:

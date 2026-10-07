@@ -63,9 +63,14 @@ matched with the rule in "Dedupe" below.
   1,442) say "예산 소진시까지", "상시 접수", "세부사업별 상이" etc. - those keep null dates
   and the list shows the text instead of "일정 미정".
 - `recruiting`: true for everything currently posted unless its end date has passed. After
-  a **complete** response (item count matches `totCnt`, list non-empty), the job sets
-  `recruiting=false` on BizInfo rows that are no longer listed. A truncated or empty
-  response skips that step, so an upstream hiccup can't close every announcement.
+  a **complete** response the job sets `recruiting=false` on BizInfo rows that are no
+  longer listed. Complete means provably whole: `totCnt` present and readable (a number;
+  "1,443" tolerated) and at least that many *distinct* ids received. A missing totCnt, a
+  short or empty list, or repeated/missing ids all skip the closing step, so an upstream
+  hiccup can't close announcements that are still open.
+- Entity decoding (`decode_entities` in `worker/collectors/base.py`) only expands
+  `;`-terminated references; `html.unescape` alone also expands legacy forms without `;`
+  and turns a URL's `&notice=1` into `¬ice=1`. URL fields are never decoded.
 
 ## Dedupe - `worker/dedupe/support_programs.py`
 
@@ -76,8 +81,9 @@ deleted row would come back next hour, and `raw_payload` is the evidence if a ma
 
 Exact title matching found 0 of the 17 real duplicates: 기업마당 adds `[지역]` and "공고",
 K-Startup wraps names in 「」 or moves "4차" to the end, spacing/punctuation differ. Rule:
-1. normalize: drop leading `[...]` tags, all non-word characters, a trailing
-   (재/수정/변경/연장)공고; lowercase;
+1. normalize: drop leading `[...]` tags, all non-word characters - including 'ㆍ'
+   (U+318D), which the regex engine treats as a Hangul letter, not punctuation - and a
+   trailing (재/수정/변경/연장)공고; lowercase;
 2. the set of numbers in both titles must be equal (separates "2차" from "3차" of a
    recurring program, which otherwise score 0.85+);
 3. both have a deadline: same day and bigram overlap coefficient >= 0.8;
@@ -91,9 +97,11 @@ same contest listed with different deadlines on the two sites (10-09 vs 10-11) s
 visible twice.
 
 The pass runs at the end of every BizInfo job (`worker/jobs/bizinfo_job.py`) over open
-K-Startup rows (`application_end >= today` or `recruiting`) and recruiting BizInfo rows,
-and writes only rows whose mark changes, including clearing stale marks. A K-Startup row
-collected between BizInfo runs is picked up within the hour.
+K-Startup rows and recruiting BizInfo rows, and writes only rows whose mark changes,
+including clearing stale marks. "Open" is exactly the web's default 모집 중 definition
+(recruiting, and no deadline or one not yet passed): the kept K-Startup row must itself
+be visible wherever its 기업마당 copy is hidden, or the program disappears from that view.
+A K-Startup row collected between BizInfo runs is picked up within the hour.
 
 ## Schema - `supabase/migrations/20261007100000_bizinfo_support_programs.sql`
 
@@ -137,11 +145,13 @@ procurement filter (`rule_filter.py`) because several of its keywords mean somet
 in support-program titles - measured on all 1,599 open programs (2026-10-07):
 "IoT/사물인터넷" = environmental-emission sensors for small workplaces (all 7 hits),
 "전산" = substring of 안전산업/가전산업, "플랫폼/온라인/디지털" = 소상공인 online-sales
-support, "로봇/반도체" = hardware. A trailing parenthetical (기업마당's funding-project
-name, e.g. "(AI 빅데이터 기반 의료바이오 첨단기기 연구제조센터 구축사업)" on a
-medical-device program) is ignored unless it names an IT-industry program.
+support, "로봇/반도체" = hardware. A trailing parenthetical that names a funding project
+("...사업"/"...구축", e.g. "(AI 빅데이터 기반 의료바이오 첨단기기 연구제조센터 구축사업)" on a
+medical-device program) is ignored unless it names an IT-industry program; other trailing
+parentheticals count, since K-Startup puts the field there ("(AI 분야)"). "게임체인저" is
+an exception (policy buzzword, not the game industry).
 
-Result: 154 of 1,599 open programs. Every hit was read; then the 308 non-hits with weaker
+Result: 155 of 1,599 open programs. Every hit was read; then the 308 non-hits with weaker
 words were read for misses, which added 디지털혁신, 디지털 품질(SW testing), 가명정보,
 위치정보, 개인정보, 전자문서, 스마트시티, AIoT, ETRI, ChatGPT, 코딩 (17 programs). The 98 hits
 among closed K-Startup rows were read as well. Tests use those real titles.
@@ -154,8 +164,9 @@ python -m worker.jobs.support_reclassify --dry-run
 python -m worker.jobs.support_reclassify
 ```
 
-It re-runs K-Startup's `normalize()` on each stored `raw_payload` and re-flags BizInfo
-titles, writing only columns that changed (never recruiting, dates or `duplicate_of`).
+It re-runs K-Startup's `normalize()` on each stored `raw_payload` and re-derives
+BizInfo's `it_related`/`investment_linked` from the stored title and description, writing
+only columns that changed (never recruiting, dates or `duplicate_of`).
 
 Same change set: K-Startup's API HTML-escapes some fields (`&apos;`, `&amp;` - 28 stored
 rows, e.g. category "기술개발(R&amp;D)", seen in its raw_payload, not introduced by us).

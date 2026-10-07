@@ -38,6 +38,9 @@ from worker.ai.support_it_filter import is_it_related
         "[온라인] chatGPT로 만드는 내 퍼스널 브랜딩 플랫폼 만들기 | 바이브코딩 실전 클래스",
         # The trailing parenthetical names an IT-industry program, so it is kept.
         "[충남] 2027년 지역선도기업사업화지원 공고(지역디지털기업성장지원사업)",
+        # A trailing field marker (not a funding project) counts.
+        "「제24차 세계한상대회 스타트업 경연대회-시애틀 진출 연계」 참여기업 모집 공고(AI 분야)",
+        "2026년 초기창업패키지 로켓십 IR 경진대회 참가기업 모집 (1회차: AI·빅데이터)",
         # Stored HTML-escaped by K-Startup before the decoding fix.
         "2026 경기AI기업 글로벌 공동연구ㆍ해외진출 예비참여기업 공개모집",
     ],
@@ -93,6 +96,11 @@ def test_latin_keywords_need_word_boundaries():
     assert not is_it_related("MAIN STREET 상권 활성화 지원사업")
     assert not is_it_related("SAINT 프로그램 참가자 모집")
     assert is_it_related("AI 올라운더(기획,개발,마케팅) 창업가육성과정 8기 모집")
+
+
+def test_game_changer_buzzword_is_not_the_game_industry():
+    assert not is_it_related("2026년 지역 게임체인저 기업 육성사업 공고")
+    assert not is_it_related("미래 게임 체인저 스타트업 모집")
 
 
 def test_html_entities_are_decoded_before_matching():

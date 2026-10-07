@@ -21,8 +21,6 @@ G2B, there's no lookback-window date filter to bound it otherwise).
 
 from __future__ import annotations
 
-import hashlib
-import html
 import json
 import logging
 from collections.abc import Iterable
@@ -34,7 +32,13 @@ from pydantic import BaseModel
 
 from worker.ai.investment_filter import is_investment_linked
 from worker.ai.support_it_filter import is_it_related
-from worker.collectors.base import BaseCollector, CollectorError, RawRecord
+from worker.collectors.base import (
+    BaseCollector,
+    CollectorError,
+    RawRecord,
+    compute_content_hash,
+    decode_entities,
+)
 from worker.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -76,7 +80,7 @@ def _text(value: Any) -> str | None:
     # 지원&apos;"). Decoded once here; existing rows via worker/jobs/support_reclassify.py.
     if not value:
         return None
-    return html.unescape(str(value)).strip() or None
+    return decode_entities(str(value)).strip() or None
 
 
 def _parse_yn(value: Any) -> bool | None:
@@ -96,11 +100,6 @@ def _parse_date(value: Any) -> datetime | None:
     except ValueError:
         logger.warning("kstartup: unrecognized date format", extra={"value": value})
         return None
-
-
-def compute_content_hash(payload: dict[str, Any]) -> str:
-    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def parse_response_body(text: str) -> dict[str, Any]:

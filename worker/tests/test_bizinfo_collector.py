@@ -388,3 +388,84 @@ def test_run_persists_every_record_through_repository(monkeypatch):
     assert result.persisted == 5
     assert result.failed == 0
     assert [p.external_id for p in persisted][0] == "PBLN_000000000127023"
+
+
+def test_missing_total_count_is_not_complete():
+    # The spec's fallback shape carries no totCnt; without it nothing proves the list is
+    # whole, so the job must not close "unlisted" announcements.
+    body = {"jsonArray": {"item": [{"pblancId": "A", "pblancNm": "a"}]}}
+    collector = _collector(lambda request: httpx.Response(200, json=body))
+
+    assert len(list(collector.collect())) == 1
+    assert collector.complete is False
+
+
+def test_total_count_with_thousands_separator_is_read():
+    body = {"jsonArray": [{"pblancId": "A", "pblancNm": "a", "totCnt": "1,443"}]}
+    collector = _collector(lambda request: httpx.Response(200, json=body))
+
+    list(collector.collect())
+    assert collector.complete is False  # 1 of 1,443 - read as a number, not ignored
+
+
+def test_repeated_ids_do_not_count_toward_completeness():
+    # totCnt == number of entries, but one entry repeats an id: a real announcement is
+    # missing, so this is not the complete list.
+    body = {
+        "jsonArray": [
+            {"pblancId": "A", "pblancNm": "a", "totCnt": 2},
+            {"pblancId": "A", "pblancNm": "a", "totCnt": 2},
+        ]
+    }
+    collector = _collector(lambda request: httpx.Response(200, json=body))
+
+    assert [r.external_id for r in collector.collect()] == ["A"]
+    assert collector.complete is False
+
+
+def test_collector_reuse_starts_each_collect_fresh():
+    body = {"jsonArray": [{"pblancId": "A", "pblancNm": "a", "totCnt": 1}]}
+    collector = _collector(lambda request: httpx.Response(200, json=body))
+
+    assert len(list(collector.collect())) == 1
+    assert len(list(collector.collect())) == 1  # not skipped as "already seen"
+    assert collector.listed_ids == {"A"}
+    assert collector.complete is True
+
+
+def test_source_url_query_string_is_not_entity_decoded():
+    # html.unescape would turn "&notice=1" into "¬ice=1" (legacy entity without ";").
+    item = {
+        "pblancId": "A",
+        "pblancNm": "x",
+        "pblancUrl": "https://www.bizinfo.go.kr/view.do?pblancId=A&notice=1&regionCd=11",
+    }
+
+    assert _collector().normalize(_raw(item)).source_url == (
+        "https://www.bizinfo.go.kr/view.do?pblancId=A&notice=1&regionCd=11"
+    )
+
+
+def test_text_fields_decode_only_terminated_entities():
+    item = {"pblancId": "A", "pblancNm": "R&D &amp; &apos;AI&apos; &copy2026", "excInsttNm": "x"}
+
+    assert _collector().normalize(_raw(item)).title == "R&D & 'AI' &copy2026"
+
+
+def test_url_encoded_key_is_masked_too():
+    key = "ab+cd/ef=="
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError(f"failed to connect: {request.url}")
+
+    collector = BizInfoCollector(
+        settings=_settings(key),
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+        today=TODAY,
+    )
+
+    with pytest.raises(CollectorError) as excinfo:
+        list(collector.collect())
+    message = str(excinfo.value)
+    assert "ab+cd" not in message and "ab%2Bcd" not in message
+    assert "***" in message

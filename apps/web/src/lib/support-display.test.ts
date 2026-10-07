@@ -5,7 +5,6 @@ import {
   parseSupportField,
   parseSupportSource,
   parseSupportStatus,
-  seoulDateKey,
   supportSourceLabel,
 } from "./support-display";
 
@@ -98,17 +97,5 @@ describe("SUPPORT_FIELDS", () => {
   it("parses field keys", () => {
     expect(parseSupportField("rnd")?.label).toBe("기술개발");
     expect(parseSupportField("nope")).toBeUndefined();
-  });
-});
-
-describe("seoulDateKey", () => {
-  it("uses the Seoul calendar day", () => {
-    // 2026-10-07 23:30 UTC is already 2026-10-08 in Seoul.
-    expect(seoulDateKey(new Date("2026-10-07T23:30:00Z"))).toBe("2026-10-08");
-    expect(seoulDateKey(NOW)).toBe("2026-10-07");
-  });
-
-  it("shifts by whole days across month ends", () => {
-    expect(seoulDateKey(new Date("2026-10-28T03:00:00Z"), 7)).toBe("2026-11-04");
   });
 });

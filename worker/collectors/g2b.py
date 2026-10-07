@@ -9,7 +9,6 @@ Note the "ad/" segment - it's easy to miss and the API returns a generic
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 from collections.abc import Iterable
@@ -20,7 +19,12 @@ import httpx
 from pydantic import BaseModel
 
 from worker.ai.rule_filter import classify
-from worker.collectors.base import BaseCollector, CollectorError, RawRecord
+from worker.collectors.base import (
+    BaseCollector,
+    CollectorError,
+    RawRecord,
+    compute_content_hash,
+)
 from worker.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -98,11 +102,6 @@ def _parse_datetime(value: Any) -> datetime | None:
             continue
     logger.warning("g2b: unrecognized datetime format", extra={"value": value})
     return None
-
-
-def compute_content_hash(payload: dict[str, Any]) -> str:
-    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def parse_response_body(text: str) -> dict[str, Any]:

@@ -30,6 +30,16 @@ def _kstartup_row(**overrides):
     return row
 
 
+def _bizinfo_row(row_id, title, it_related=False, investment_linked=False):
+    return {
+        "id": row_id,
+        "title": title,
+        "description": None,
+        "it_related": it_related,
+        "investment_linked": investment_linked,
+    }
+
+
 class FakeRepo:
     DERIVED_COLUMNS = DERIVED_COLUMNS
 
@@ -49,17 +59,14 @@ def repo(monkeypatch):
     fake = FakeRepo(
         kstartup=[_kstartup_row()],
         bizinfo=[
-            {
-                "id": "bz-1",
-                "title": "2026년 인천 블록체인 바우처 지원사업 수요기업 모집 공고",
-                "it_related": False,
-            },
-            {
-                "id": "bz-2",
-                "title": "2026년 소상공인 온라인판로 지원사업 참여기업 모집공고",
-                "it_related": False,
-            },
-            {"id": "bz-3", "title": "2026년 데이터 품질인증 지원사업 공고", "it_related": True},
+            _bizinfo_row("bz-1", "2026년 인천 블록체인 바우처 지원사업 수요기업 모집 공고"),
+            _bizinfo_row("bz-2", "2026년 소상공인 온라인판로 지원사업 참여기업 모집공고"),
+            _bizinfo_row("bz-3", "2026년 데이터 품질인증 지원사업 공고", it_related=True),
+            # A closed posting the collector will never re-send: its investment flag is
+            # stale (데모데이 is an investment keyword) and only reclassify can fix it.
+            _bizinfo_row(
+                "bz-4", "[경기] 부천시 2026년 스타트업포럼(IR데모데이) 참가기업 모집 공고"
+            ),
         ],
     )
     monkeypatch.setattr(support_reclassify, "support_programs", fake)
@@ -72,15 +79,16 @@ def test_writes_only_changed_columns_of_changed_rows(repo):
     assert repo.updates == [
         ("ks-1", {"category": "기술개발(R&D)", "it_related": True}),
         ("bz-1", {"it_related": True}),
+        ("bz-4", {"investment_linked": True}),
     ]
-    assert result == {"rows": 2, "category": 1, "it_related": 2}
+    assert result == {"rows": 3, "category": 1, "it_related": 2, "investment_linked": 1}
 
 
 def test_dry_run_writes_nothing(repo):
     result = support_reclassify.run(dry_run=True)
 
     assert repo.updates == []
-    assert result["rows"] == 2
+    assert result["rows"] == 3
 
 
 def test_second_run_is_a_no_op(repo):

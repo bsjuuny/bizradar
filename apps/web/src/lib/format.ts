@@ -24,6 +24,28 @@ export function formatDateTime(iso: string | null | undefined): string {
   }).format(date);
 }
 
+const DAY_MS = 86_400_000;
+
+const SEOUL_DAY = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "Asia/Seoul",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+/**
+ * Asia/Seoul 달력일(+offsetDays)을 "YYYY-MM-DD"로. D-day 계산과 Support Radar의 마감일
+ * 필터가 같은 "오늘"을 쓰도록 하나로 둔다 - 둘이 어긋나면 목록 필터와 D-day 표시가 오늘 마감인
+ * 공고를 서로 다르게 판단한다.
+ */
+export function seoulDateKey(date: Date = new Date(), offsetDays = 0): string {
+  const key = SEOUL_DAY.format(date);
+  if (offsetDays === 0) return key;
+  return new Date(Date.parse(`${key}T00:00:00Z`) + offsetDays * DAY_MS)
+    .toISOString()
+    .slice(0, 10);
+}
+
 /**
  * Asia/Seoul 달력일 기준으로 마감일까지 남은 일수. 음수면 이미 지난 마감.
  * `formatDday`와 큐 정렬(`lib/queue.ts`)이 같은 계산을 공유하도록 분리했다.
@@ -35,21 +57,10 @@ export function daysUntilDeadline(
   if (!iso) return null;
   const deadline = new Date(iso);
   if (Number.isNaN(deadline.getTime())) return null;
-  const todayKey = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(now);
-  const deadlineKey = new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Seoul",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(deadline);
-  const day = 86_400_000;
   return Math.round(
-    (Date.parse(`${deadlineKey}T00:00:00Z`) - Date.parse(`${todayKey}T00:00:00Z`)) / day,
+    (Date.parse(`${seoulDateKey(deadline)}T00:00:00Z`) -
+      Date.parse(`${seoulDateKey(now)}T00:00:00Z`)) /
+      DAY_MS,
   );
 }
 

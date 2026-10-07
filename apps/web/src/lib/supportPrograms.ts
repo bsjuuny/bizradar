@@ -2,13 +2,14 @@ import "server-only";
 
 import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/dal";
+import { seoulDateKey } from "@/lib/format";
+import { ilikeAnyFilter } from "@/lib/postgrest";
 import {
   CLOSING_SOON_DAYS,
   type SupportFieldKey,
   type SupportSource,
   type SupportStatus,
   parseSupportField,
-  seoulDateKey,
 } from "@/lib/support-display";
 
 export const DEFAULT_PAGE_SIZE = 20;
@@ -43,10 +44,6 @@ export type SupportProgramPage = {
   page: number;
   pageSize: number;
 };
-
-function escapeLikeTerm(term: string): string {
-  return term.replace(/[%_]/g, "\\$&");
-}
 
 export async function getSupportPrograms({
   page = 1,
@@ -135,8 +132,7 @@ export async function getSupportPrograms({
 
   const term = q?.trim();
   if (term) {
-    const escaped = escapeLikeTerm(term);
-    query = query.or(`title.ilike.%${escaped}%,organization.ilike.%${escaped}%`);
+    query = query.or(ilikeAnyFilter(["title", "organization"], term));
   }
 
   const { data, error, count } = await query;

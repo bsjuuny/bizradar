@@ -25,15 +25,13 @@ dropped off the list as no longer recruiting.
 
 from __future__ import annotations
 
-import hashlib
-import html
 import json
 import logging
 import re
 from collections.abc import Iterable
 from datetime import UTC, date, datetime
 from typing import Any
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import quote, quote_plus, urljoin, urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -41,7 +39,13 @@ from pydantic import BaseModel
 
 from worker.ai.investment_filter import is_investment_linked
 from worker.ai.support_it_filter import is_it_related
-from worker.collectors.base import BaseCollector, CollectorError, RawRecord
+from worker.collectors.base import (
+    BaseCollector,
+    CollectorError,
+    RawRecord,
+    compute_content_hash,
+    decode_entities,
+)
 from worker.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -119,28 +123,41 @@ class BizInfoNormalizedProgram(BaseModel):
     raw_payload: dict[str, Any]
 
 
-def compute_content_hash(payload: dict[str, Any]) -> str:
-    canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False)
-    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-
 def _field(item: dict[str, Any], *names: str) -> str:
     """First non-empty value among the spec's name and its RSS-style alias, as clean
-    single-line text (HTML entities decoded, whitespace collapsed)."""
+    single-line text (HTML entities decoded, whitespace collapsed). Not for URLs - see
+    _url_field."""
     for name in names:
         value = item.get(name)
         if value is None:
             continue
-        text = " ".join(html.unescape(str(value)).split())
+        text = " ".join(decode_entities(str(value)).split())
         if text:
             return text
     return ""
 
 
+def _url_field(item: dict[str, Any], *names: str) -> str:
+    """Like _field but without entity decoding: a URL's "&" starts a query parameter,
+    not a character reference."""
+    for name in names:
+        value = item.get(name)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _total_count(item: dict[str, Any]) -> int | None:
+    # A number in the live API (1443); the spec table types it as a string. Tolerates
+    # "1,443" too. Anything else -> unknown.
+    text = str(item.get("totCnt", "")).replace(",", "").strip()
+    return int(text) if text.isdigit() else None
+
+
 def html_to_text(value: str) -> str:
     """사업개요(bsnsSumryCn)는 HTML이 섞여 온다 - 줄바꿈은 살리고 태그는 지운다."""
     text = _BLOCK_END_TAGS.sub("\n", value)
-    text = html.unescape(_TAGS.sub("", text))
+    text = decode_entities(_TAGS.sub("", text))
     lines = (" ".join(line.split()) for line in text.splitlines())
     return "\n".join(line for line in lines if line)
 
@@ -225,9 +242,9 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         self._client = client
         self._owns_client = client is None
         self._today = today
-        # Filled by collect(): every pblancId in the response, and whether the response
-        # held the whole list (totCnt matched) - only then may the job treat "not listed"
-        # as "no longer recruiting".
+        # Filled by collect(), reset at its start: every pblancId in the response, and
+        # whether the response held the whole list - only then may the job treat "not
+        # listed" as "no longer recruiting".
         self.listed_ids: set[str] = set()
         self.complete = False
 
@@ -248,9 +265,14 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
         return self._client
 
     def _mask(self, text: str) -> str:
-        # The key travels in the query string, and httpx error messages quote the URL.
+        # The key travels in the query string, and httpx error messages quote the URL -
+        # percent-encoded, so a key with "+", "/" or "=" appears in that form, not raw.
         key = self.settings.bizinfo_api_key
-        return text.replace(key, "***") if key else text
+        if not key:
+            return text
+        for form in {key, quote_plus(key), quote(key, safe="")}:
+            text = text.replace(form, "***")
+        return text
 
     def _fetch(self) -> list[dict[str, Any]]:
         if not self.settings.bizinfo_api_key:
@@ -282,26 +304,21 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
             if resp.status_code >= 400:
                 # 403/429 are the source refusing us - don't hammer it, fail this cycle.
                 raise CollectorError(f"BizInfo API HTTP error: {resp.status_code}")
-            return extract_items(resp.text)
+            try:
+                return extract_items(resp.text)
+            except CollectorError as exc:
+                # The error quotes part of the body; mask in case it ever echoes the key.
+                raise CollectorError(self._mask(str(exc))) from None
 
         raise CollectorError(
             f"BizInfo API request failed after {MAX_RETRIES} attempts: {last_error}"
         )
 
     def collect(self) -> Iterable[RawRecord]:
+        self.listed_ids = set()
+        self.complete = False
         items = self._fetch()
-
-        total_text = _field(items[0], "totCnt") if items else ""
-        total = int(total_text) if total_text.isdigit() else None
-        # An empty list is treated as incomplete too: "nothing is open anywhere in Korea"
-        # is far less likely than an upstream hiccup, and the job would otherwise close
-        # every announcement it has.
-        self.complete = bool(items) and (total is None or total <= len(items))
-        if total is not None and total > len(items):
-            logger.warning(
-                "bizinfo: truncated response - closing unlisted announcements is skipped",
-                extra={"total": total, "received": len(items)},
-            )
+        total = _total_count(items[0]) if items else None
 
         for item in items:
             pblanc_id = _field(item, "pblancId", "seq")
@@ -316,6 +333,17 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
                 external_id=pblanc_id,
                 fetched_at=datetime.now(UTC),
                 payload=item,
+            )
+
+        # Complete only when the source states its total and every one of those
+        # announcements arrived with a distinct id. A missing/unreadable totCnt, a short
+        # or empty list, or repeated/missing ids all count as incomplete: closing
+        # "unlisted" announcements on such a response would close ones that are open.
+        self.complete = total is not None and total > 0 and len(self.listed_ids) >= total
+        if not self.complete:
+            logger.warning(
+                "bizinfo: response not provably complete - closing unlisted is skipped",
+                extra={"total": total, "received": len(items), "distinct": len(self.listed_ids)},
             )
 
     def normalize(self, raw: RawRecord) -> BizInfoNormalizedProgram:
@@ -352,7 +380,7 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
             application_end=datetime.combine(period[1], datetime.min.time()) if period else None,
             application_period_text=period_text or None,
             description=description,
-            source_url=_absolute_url(_field(item, "pblancUrl", "link"), raw.external_id),
+            source_url=_absolute_url(_url_field(item, "pblancUrl", "link"), raw.external_id),
             content_hash=compute_content_hash(item),
             raw_payload=item,
         )
