@@ -1,7 +1,10 @@
 """Load the shared DPAPI vault (C:\\github\\.secrets) into the environment, ahead of
-.env.worker. Values already in the environment win; .env.worker only fills what the vault
-doesn't have. On a machine without the vault (another PC, CI) this silently does nothing,
-and a vault that can't be opened only prints a warning.
+.env.worker. The vault is the source of truth (2026-10-08): its values overwrite what is
+already in the environment - including what PM2's env_file injected from .env.worker - and
+pydantic-settings prefers environment variables over the .env.worker file, so .env.worker
+only fills what the vault doesn't have. On a machine without the vault (another PC, CI)
+this silently does nothing, and a vault that can't be opened only prints a warning (the
+.env.worker values then stay in use).
 
 Call it from process entry points only - the PM2 scheduler and CLI commands such as
 worker.jobs.support_reclassify - and before anything calls worker.config.get_settings(),
@@ -28,6 +31,6 @@ def load_github_secrets(file_keys: list[str] | None = None) -> None:
             raise ImportError(f"cannot load {VAULT_LOADER}")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        module.load_secrets(file_keys or [WORKER_ENV_FILE], optional=True)
+        module.load_secrets(file_keys or [WORKER_ENV_FILE], override=True, optional=True)
     except Exception as exc:  # noqa: BLE001 - a broken vault must not stop the worker
         print(f"[secrets] 금고 로더를 불러오지 못했습니다: {exc}", file=sys.stderr)
