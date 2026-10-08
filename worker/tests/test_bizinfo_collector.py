@@ -23,7 +23,7 @@ from worker.collectors.bizinfo import (
     extract_items,
     html_to_text,
     parse_period,
-    parse_region,
+    title_tag_region,
 )
 from worker.config import Settings
 
@@ -164,7 +164,7 @@ def test_parse_period_reads_only_real_date_ranges(raw, expected):
     ],
 )
 def test_parse_region_only_from_known_region_tags(title, expected):
-    assert parse_region(title) == expected
+    assert title_tag_region(title) == expected
 
 
 def test_html_to_text_keeps_line_breaks_and_drops_tags():
@@ -694,3 +694,15 @@ def test_time_with_seconds_is_read():
         date(2026, 10, 1),
         date(2026, 10, 31),
     )
+
+
+def test_source_url_with_userinfo_or_port_falls_back_to_the_detail_page():
+    # The web's safeExternalUrl drops these, which would leave no "원문 보기" link at all.
+    for raw in (
+        "https://user@www.bizinfo.go.kr/sii/view.do?pblancId=A",
+        "https://www.bizinfo.go.kr:8443/sii/view.do?pblancId=A",
+    ):
+        item = {"pblancId": "A", "pblancNm": "x", "pblancUrl": raw}
+        assert _collector().normalize(_raw(item)).source_url == (
+            "https://www.bizinfo.go.kr/sii/siia/selectSIIA200Detail.do?pblancId=A"
+        )

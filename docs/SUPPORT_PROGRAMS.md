@@ -62,9 +62,10 @@ matched with the rule in "Dedupe" below.
 - Retries (transport errors, 5xx) wait 2 s then 5 s; 4xx is not retried. `content_hash`
   leaves out `inqireCo` (view count) and `totCnt` (list size), which change every fetch.
 - Only changed rows are written: the job reads the stored `(id, content_hash,
-  recruiting)` once per run - for rows seen in the list within 30 days (every listed row,
-  and every recruiting row the closing step may close), not the ever-growing closed
-  history; bounded even if the closing step stalls for weeks - and hands it to the collector (if that read fails, every
+  recruiting)` once per run - for rows seen in the list within 30 days (every listed row)
+  plus recruiting rows whose deadline is still ahead (so a dated posting delisted during
+  a long stall is still closed once the closing step runs again), not the ever-growing
+  closed history; bounded even if the closing step stalls for weeks - and hands it to the collector (if that read fails, every
   row is written) and to the closing step. A posting that matches is skipped - nearly all
   of the ~1,450 are, every hour - and the changed ones are upserted 100 per request
   (`BizInfoCollector.run`; a failing chunk is retried row by row, and after 5 single-row
@@ -207,7 +208,7 @@ paired copies, orders and pages in one place:
 2. `visible`: an original and its copies (more than one is possible - a 공고 and its
    재공고 both repeating one K-Startup posting, seen once on 2026-10-08) form a group, and
    the rows of a group that are *in `filtered`* show as one: open rows first, then the
-   original, then the lowest id. So both open -> the original; only a copy open -> that
+   original, then the newest posting (a 재공고 over its 공고). So both open -> the original; only a copy open -> that
    copy; all closed -> the original. Checked against `filtered` itself, not approximated:
    NULL columns on the original, or filters added later, can't make a program vanish (an
    earlier version re-applied each filter to copied `original_*` columns by hand, and a

@@ -135,18 +135,13 @@ def match_score(a: ProgramTitle, b: ProgramTitle) -> tuple[float, float] | None:
     return None
 
 
-def find_duplicates(keep: Iterable[ProgramTitle], hide: Iterable[ProgramTitle]) -> dict[str, str]:
-    """Map each `hide` row that is the same program as some `keep` row to that row's id
-    (the best-scoring one if several qualify - by overlap, then Jaccard, since a longer
-    title that merely contains the candidate ties on overlap). `keep` rows are never
-    hidden."""
-    return {row_id: original for row_id, (_, original) in _best_matches(keep, hide).items()}
-
-
-def _best_matches(
+def best_matches(
     keep: Iterable[ProgramTitle], hide: Iterable[ProgramTitle]
 ) -> dict[str, tuple[tuple[float, float], str]]:
-    """find_duplicates with each match's score."""
+    """Map each `hide` row that is the same program as some `keep` row to (score, that
+    row's id) - the best-scoring one if several qualify: by overlap, then Jaccard, since a
+    longer title that merely contains the candidate ties on overlap. `keep` rows are never
+    hidden."""
     keep_rows = list(keep)
     duplicates: dict[str, tuple[tuple[float, float], str]] = {}
     for candidate in hide:
@@ -178,7 +173,7 @@ def plan_duplicate_marks(
     (list_support_programs: the original, unless only the copy is open); it never changes
     either row's 모집 status. So a mark moves only to a strictly better-scoring original,
     and is cleared only when the rule no longer matches."""
-    best = _best_matches(keep, hide)
+    best = best_matches(keep, hide)
     for copy, original in marked:
         existing = match_score(copy, original) if copy.may_be_hidden else None
         if existing is not None and (copy.id not in best or best[copy.id][0] <= existing):

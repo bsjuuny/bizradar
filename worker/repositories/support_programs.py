@@ -100,20 +100,30 @@ def _parse_timestamp(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
 
 
+def _recent_or_dated_open() -> str:
+    """PostgREST or-filter: 기업마당 rows seen within _STATE_WINDOW, or still recruiting with
+    a deadline not yet passed (bounded by the dated open postings, ~500)."""
+    now = datetime.now(UTC)
+    since = (now - _STATE_WINDOW).isoformat()
+    today = datetime.combine(now.date(), datetime.min.time(), tzinfo=UTC).isoformat()
+    return f'last_seen_at.gte."{since}",and(recruiting.is.true,application_end.gte."{today}")'
+
+
 def fetch_bizinfo_state() -> dict[str, StoredRow]:
     """external_id -> StoredRow for the 기업마당 rows a run can touch: those seen in the
     list within _STATE_WINDOW - every listed row, including a listed posting past its
     deadline (stored closed, still recognized as unchanged), and every recruiting row the
     closing pass may need to close. Not the closed history - ~1,500 new postings a month
     pile up there, and a posting that reappears after that long is simply written again.
-    A row still recruiting=true but unseen for longer (the closing pass stalled for a
-    month) drops out too; is_open already treats it as closed (date-less: 3 days unseen;
-    dated: its date), so only the stored flag lags."""
-    since = (datetime.now(UTC) - _STATE_WINDOW).isoformat()
+    Recruiting rows with a deadline still ahead are read however long ago they were seen:
+    is_open keeps those open until their date, so if one was delisted while the closing
+    pass was stalled for over _STATE_WINDOW, the pass must still find and close it. A
+    date-less recruiting row unseen that long drops out - is_open already treats it as
+    closed (3 days unseen), so only its stored flag lags."""
     rows = _read_all(
         "support_programs",
         "id, external_id, content_hash, recruiting, last_seen_at",
-        lambda query: query.eq("source", "bizinfo").gte("last_seen_at", since),
+        lambda query: query.eq("source", "bizinfo").or_(_recent_or_dated_open()),
     )
     return {
         row["external_id"]: StoredRow(
@@ -164,9 +174,7 @@ def close_unlisted_bizinfo(
         for external_id, row in stored.items()
         if row.recruiting and external_id not in listed
     ]
-    client = get_service_client()
-    for chunk in chunked(stale, _UPDATE_CHUNK_SIZE):
-        client.table("support_programs").update({"recruiting": False}).in_("id", chunk).execute()
+    update_programs(stale, {"recruiting": False})
     return len(stale)
 
 
@@ -210,12 +218,11 @@ def fetch_bizinfo_for_dedupe() -> tuple[
     reaches old pairs too. That set only grows with real duplicates - 17 of ~1,450 open
     postings on 2026-10-07, so a few hundred a year: one page, and microseconds to
     re-match."""
-    since = (datetime.now(UTC) - _STATE_WINDOW).isoformat()
     rows = _read_all(
         "support_programs",
         "id, title, application_end, region, duplicate_of, is_open",
         lambda query: query.eq("source", "bizinfo").or_(
-            f'last_seen_at.gte."{since}",duplicate_of.not.is.null'
+            f"{_recent_or_dated_open()},duplicate_of.not.is.null"
         ),
     )
     open_rows = [_program_title(row) for row in rows if row["is_open"] is True]
@@ -247,12 +254,8 @@ def set_duplicate_of(changes: Mapping[str, str | None]) -> None:
     by_value: dict[str | None, list[str]] = {}
     for row_id, duplicate_of in changes.items():
         by_value.setdefault(duplicate_of, []).append(row_id)
-    client = get_service_client()
     for duplicate_of, row_ids in by_value.items():
-        for chunk in chunked(row_ids, _UPDATE_CHUNK_SIZE):
-            client.table("support_programs").update({"duplicate_of": duplicate_of}).in_(
-                "id", chunk
-            ).execute()
+        update_programs(row_ids, {"duplicate_of": duplicate_of})
 
 
 # Per source, the columns its collector's normalize() derives from the raw payload, i.e.

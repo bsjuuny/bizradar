@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireUser } from "@/lib/dal";
 import {
   CLOSING_SOON_DAYS,
+  DEFAULT_SUPPORT_STATUS,
   type SupportFieldKey,
   type SupportSource,
   type SupportStatus,
@@ -94,7 +95,7 @@ export async function getSupportPrograms(
 
   async function fetchPage(page: number): Promise<ListResult> {
     const { data, error } = await supabase.rpc("list_support_programs", {
-      p_status: options.status ?? "open",
+      p_status: options.status ?? DEFAULT_SUPPORT_STATUS,
       p_it_only: Boolean(options.itOnly),
       p_investment_only: Boolean(options.investmentOnly),
       p_source: options.source ?? null,

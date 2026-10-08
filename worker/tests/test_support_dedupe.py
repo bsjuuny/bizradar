@@ -8,12 +8,17 @@ import pytest
 
 from worker.dedupe.support_programs import (
     ProgramTitle,
-    find_duplicates,
+    best_matches,
     match_score,
     normalize_title,
     plan_duplicate_marks,
     plan_updates,
 )
+
+
+def find_duplicates(keep, hide):
+    """best_matches without the scores - what most tests compare."""
+    return {row_id: original for row_id, (_, original) in best_matches(keep, hide).items()}
 
 
 def _same(a: ProgramTitle, b: ProgramTitle) -> bool:

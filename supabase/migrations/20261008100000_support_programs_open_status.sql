@@ -15,7 +15,7 @@
 -- 2. list_support_programs의 중복 숨김: 원본(K-Startup)과 그 사본들(duplicate_of가 원본을
 --    가리키는 기업마당 행 - 공고와 재공고처럼 둘 이상일 수 있다, 2026-10-08 실측 1건)은 한
 --    묶음이고, 결과에 든 묶음은 한 줄로 보인다: 모집 중인 행이 먼저, 그 안에서 원본이
---    먼저. 원본과 사본이 둘 다 모집 중이면 원본, 사본만 모집 중이면 그 사본, 둘 다 마감이면
+--    먼저, 사본끼리는 나중에 올라온 것이 먼저. 원본과 사본이 둘 다 모집 중이면 원본, 사본만 모집 중이면 그 사본, 둘 다 마감이면
 --    원본. 그래서 어느 보기(모집 중 / 마감 포함 전체)에서든 한 프로그램은 한 줄이고, 그
 --    줄의 상태가 보기마다 다르지 않다. 워커는 마감된 짝도 짝으로 둔다
 --    (worker/dedupe/support_programs.py plan_duplicate_marks).
@@ -95,7 +95,7 @@ create or replace function list_support_programs(
         select
           p.id, p.duplicate_of, p.source, p.title, p.organization, p.supervising_type,
           p.category, p.region, p.recruiting, p.investment_linked, p.it_related,
-          p.application_end, p.application_period_text,
+          p.application_end, p.application_period_text, p.created_at,
           is_open(p) as is_open
         from support_programs p
         where (not p_it_only or p.it_related)
@@ -131,12 +131,16 @@ create or replace function list_support_programs(
       ),
       grouped as (
         -- One row per original and its copies (see the header): open rows first, then
-        -- the original, then the lowest id.
+        -- the original, then the newest posting (a 재공고 over its 공고), then id.
         select
           f.*,
           row_number() over (
             partition by coalesce(f.duplicate_of, f.id)
-            order by (f.is_open is true) desc, (f.duplicate_of is null) desc, f.id
+            order by
+              (f.is_open is true) desc,
+              (f.duplicate_of is null) desc,
+              f.created_at desc,
+              f.id
           ) as rank_in_group
         from filtered f
       ),

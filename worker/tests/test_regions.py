@@ -1,4 +1,4 @@
-from worker.collectors.bizinfo import parse_region
+from worker.collectors.bizinfo import title_tag_region
 from worker.regions import (
     ALIASES,
     GROUPS,
@@ -11,10 +11,10 @@ from worker.regions import (
 
 
 def test_every_region_word_the_collector_accepts_is_known_to_the_dedupe_guard():
-    # A word parse_region accepts but covered_provinces doesn't know would silently turn
+    # A word title_tag_region accepts but covered_provinces doesn't know would silently turn
     # the region guard off for those rows. One vocabulary keeps them in step.
     for word in REGION_WORDS:
-        assert parse_region(f"[{word}] 공고") == word
+        assert title_tag_region(f"[{word}] 공고") == word
         assert covered_provinces(word) or word in NON_SPECIFIC
 
 
@@ -42,8 +42,8 @@ def test_unknown_words_are_not_read_as_nationwide():
 
 
 def test_official_long_forms_read_as_the_short_word():
-    assert parse_region("[부산광역시] 2026년 창업보육센터 입주기업 모집 공고") == "부산"
-    assert parse_region("[서울특별시ㆍ경기도] ...") == "서울·경기"
+    assert title_tag_region("[부산광역시] 2026년 창업보육센터 입주기업 모집 공고") == "부산"
+    assert title_tag_region("[서울특별시ㆍ경기도] ...") == "서울·경기"
     for alias, word in ALIASES.items():
         assert word in PROVINCES, alias
 

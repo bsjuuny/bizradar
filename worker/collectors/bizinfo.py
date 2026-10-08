@@ -215,23 +215,26 @@ def parse_period(raw: str) -> tuple[date, date] | None:
     return start, end
 
 
-def parse_region(title: str) -> str | None:
-    return title_tag_region(title)
-
-
 _BIZINFO_HOSTS = ("www.bizinfo.go.kr", "bizinfo.go.kr")
 
 
 def _absolute_url(raw: str, pblanc_id: str) -> str:
     """The posting's page on 기업마당. source_url becomes the "원문 보기" link, so anything
-    that isn't an http(s) URL on bizinfo.go.kr (a "javascript:" URL, another site) falls
-    back to the detail page built from the id."""
+    that isn't a plain http(s) URL on bizinfo.go.kr (a "javascript:" URL, another site, a
+    user@ or a non-default port - which the web's safeExternalUrl would drop, leaving no
+    link at all) falls back to the detail page built from the id."""
     fallback = DETAIL_URL.format(pblanc_id=pblanc_id)
     if not raw:
         return fallback
     url = urljoin(SITE_ORIGIN + "/", raw)
     parts = urlsplit(url)
-    if parts.scheme not in ("http", "https") or parts.hostname not in _BIZINFO_HOSTS:
+    if (
+        parts.scheme not in ("http", "https")
+        or parts.hostname not in _BIZINFO_HOSTS
+        or parts.username is not None
+        or parts.password is not None
+        or parts.port is not None
+    ):
         return fallback
     if parts.scheme == "http":
         url = "https://" + url[len("http://") :]
@@ -424,7 +427,7 @@ class BizInfoCollector(BaseCollector[BizInfoNormalizedProgram]):
             "organization": organization or None,
             "department": jurisdiction or None,
             "category": _field(item, "pldirSportRealmLclasCodeNm", "lcategory") or None,
-            "region": parse_region(title),
+            "region": title_tag_region(title),
             "target": _field(item, "trgetNm") or None,
             "investment_linked": is_investment_linked(title, description),
             "it_related": is_it_related(title),
