@@ -77,11 +77,16 @@ one-off run; upserts are idempotent:
 
     python -m worker.jobs.g2b_job --lookback-hours 12   # repo root, reads the vault
 
-Stored `posted_at`/`bid_close_at`/`open_at` are a separate, still-open problem: G2B's
-naive KST strings are written to `timestamptz` without an offset, so Postgres stores them
-as UTC and every G2B timestamp is nine hours late (a 12:00 deadline shows as 21:00 KST).
-Fixing the parser alone would mix shifted and correct rows - it needs a backfill of the
-existing rows in the same change.
+The same nine hours also hit the stored `posted_at`/`bid_close_at`/`open_at` until
+2026-10-12: G2B's naive KST strings were written to `timestamptz` without an offset, so
+Postgres stored them as UTC (a 12:00 deadline displayed as 21:00 KST, the queue kept a
+notice open nine hours past its deadline). `_parse_datetime` now returns Asia/Seoul-aware
+values, and `20261012100000_g2b_timestamps_kst.sql` rewrote the 27,764 rows stored before
+that, re-derived from `raw_payload` and only where the stored value was the raw string
+read as UTC (idempotent). Consumers read these as real instants: dates are taken in
+Asia/Seoul (`apps/web/src/lib/format.ts` `formatDate`/`seoulDateKey`,
+`worker/jobs/digest_job.py` `_parse_deadline`) - never by slicing the ISO string, which
+gives the UTC day.
 
 Verified live end-to-end (2026-08-07): real API -> real `opportunities` table, Korean
 text intact, re-running the same window upserts in place (row count unchanged, only

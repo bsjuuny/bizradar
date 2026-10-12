@@ -16,7 +16,7 @@ opportunities that were actually delivered.
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -107,26 +107,36 @@ def _format_budget(value: Any) -> str:
 
 
 def _parse_deadline(value: Any) -> datetime | None:
+    """마감시각을 한국 시각으로. 날짜 비교·표시가 전부 한국 달력 기준이어야 한다.
+
+    2026-10-12까지는 G2B 시각이 KST 벽시계 값 그대로 UTC로 저장돼서 "저장값의 날짜 =
+    한국 날짜"였고 변환을 하지 않았다. 지금은 실제 시각(UTC)으로 저장되므로
+    (worker/collectors/g2b.py:_parse_datetime, 20261012100000 마이그레이션) 반드시
+    Asia/Seoul로 바꿔서 날짜를 읽는다 - 안 그러면 09:00 이전 마감이 하루 앞당겨진다.
+    오프셋 없는 값은 KST 벽시계로 본다.
+    """
     if not value:
         return None
     try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
     except ValueError:
         return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=SEOUL)
+    return parsed.astimezone(SEOUL)
+
+
+def _seoul_today() -> date:
+    return datetime.now(SEOUL).date()
 
 
 def _format_close(value: Any) -> str | None:
-    """마감일 + D-day. 날짜만으로는 급한지 아닌지 바로 안 읽힌다.
-
-    G2B의 마감시각은 수집 시 tz 없이 파싱돼 저장되므로(worker/collectors/g2b.py의
-    _parse_datetime), 저장된 값의 날짜가 곧 한국 기준 날짜다. 별도 변환을 하면 오히려
-    하루가 밀린다.
-    """
+    """마감일 + D-day. 날짜만으로는 급한지 아닌지 바로 안 읽힌다."""
     parsed = _parse_deadline(value)
     if parsed is None:
         return None
     label = f"마감 {parsed.strftime('%m-%d')}"
-    days = (parsed.date() - datetime.now(UTC).date()).days
+    days = (parsed.date() - _seoul_today()).days
     if days < 0:
         return f"{label} (지남)"
     if days == 0:
@@ -138,7 +148,7 @@ def _is_expired(opportunity: dict[str, Any]) -> bool:
     parsed = _parse_deadline(opportunity.get("bid_close_at"))
     if parsed is None:
         return False
-    return parsed.date() < datetime.now(UTC).date()
+    return parsed.date() < _seoul_today()
 
 
 def _is_open_to_all(opportunity: dict[str, Any]) -> bool:

@@ -112,11 +112,16 @@ def _parse_yn(value: Any) -> bool | None:
 
 
 def _parse_datetime(value: Any) -> datetime | None:
+    """G2B timestamps (bidNtceDt, bidClseDt, opengDt) are KST wall-clock strings with no
+    offset. Returned aware so the timestamptz columns store the real instant - until
+    2026-10-12 they were returned naive, Postgres read them as UTC, and every stored G2B
+    time was nine hours late (a 12:00 deadline displayed as 21:00 KST). Rows written
+    before the fix were corrected by 20261012100000_g2b_timestamps_kst.sql."""
     if not value:
         return None
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
         try:
-            return datetime.strptime(value, fmt)
+            return datetime.strptime(value, fmt).replace(tzinfo=SEOUL)
         except ValueError:
             continue
     logger.warning("g2b: unrecognized datetime format", extra={"value": value})

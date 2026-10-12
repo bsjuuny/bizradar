@@ -6,7 +6,13 @@ import httpx
 import pytest
 
 from worker.collectors.base import CollectorError, RawRecord
-from worker.collectors.g2b import G2BCollector, _parse_yn, compute_content_hash, parse_response_body
+from worker.collectors.g2b import (
+    SEOUL,
+    G2BCollector,
+    _parse_yn,
+    compute_content_hash,
+    parse_response_body,
+)
 from worker.config import Settings
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "g2b"
@@ -62,8 +68,10 @@ def test_normalize_maps_real_fields():
 
     assert normalized.title == "2026학년도 명덕여자중학교 3학년 소규모테마형교육여행 위탁용역"
     assert normalized.organization == "서울특별시강서교육청 명덕여자중학교"
-    assert normalized.posted_at == datetime(2026, 8, 4, 8, 25, 58)
-    assert normalized.bid_close_at == datetime(2026, 8, 18, 12, 0, 0)
+    # KST wall-clock strings come back aware, so the stored instant is the real one.
+    assert normalized.posted_at == datetime(2026, 8, 4, 8, 25, 58, tzinfo=SEOUL)
+    assert normalized.bid_close_at == datetime(2026, 8, 18, 12, 0, 0, tzinfo=SEOUL)
+    assert normalized.bid_close_at == datetime(2026, 8, 18, 3, 0, 0, tzinfo=UTC)
     assert normalized.content_hash == compute_content_hash(item)
     # A school trip - the rule filter (worker/ai/rule_filter.py) should route this away
     # from the LLM, not just leave it UNKNOWN.

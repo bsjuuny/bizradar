@@ -1,4 +1,5 @@
 import logging
+from datetime import date
 from types import SimpleNamespace
 
 from worker.jobs import digest_job
@@ -559,3 +560,21 @@ def test_a_full_window_is_flagged(monkeypatch, caplog):
 
     assert any("hit the row limit" in r.message for r in caplog.records)
     assert _finished_record(caplog).window_limit_hit is True
+
+
+def test_deadline_label_uses_the_seoul_calendar_day(monkeypatch):
+    # bid_close_at is stored as the real instant since 2026-10-12: an 08:00 KST deadline
+    # is 23:00 UTC the previous day and must still read as that Seoul day.
+    monkeypatch.setattr(digest_job, "_seoul_today", lambda: date(2026, 10, 13))
+
+    assert digest_job._format_close("2026-10-14T23:00:00+00:00") == "마감 10-15 (D-2)"
+    assert digest_job._format_close("2026-10-13T03:00:00+00:00") == "마감 10-13 (오늘)"
+    assert digest_job._format_close("2026-10-12T14:59:00+00:00") == "마감 10-12 (지남)"
+
+
+def test_expired_is_judged_by_the_seoul_day(monkeypatch):
+    monkeypatch.setattr(digest_job, "_seoul_today", lambda: date(2026, 10, 13))
+
+    # 2026-10-12 15:30 UTC = 2026-10-13 00:30 KST -> today, not expired.
+    assert digest_job._is_expired({"bid_close_at": "2026-10-12T15:30:00+00:00"}) is False
+    assert digest_job._is_expired({"bid_close_at": "2026-10-12T14:00:00+00:00"}) is True

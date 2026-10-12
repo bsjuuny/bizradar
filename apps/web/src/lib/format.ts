@@ -5,9 +5,18 @@ export function formatCurrencyKRW(amount: number | null | undefined): string {
   return `${KRW_FORMATTER.format(amount)}원`;
 }
 
+/**
+ * The Asia/Seoul calendar day of a timestamp, as "YYYY-MM-DD". Date-only values (`date`
+ * columns) pass through untouched. Used to be `iso.slice(0, 10)` - the UTC day - which
+ * only looked right while G2B times were stored as KST wall-clock-as-UTC; since
+ * 2026-10-12 they are real instants and a 08:00 KST notice is the previous UTC day.
+ */
 export function formatDate(iso: string | null | undefined): string {
   if (!iso) return "—";
-  return iso.slice(0, 10);
+  if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso.slice(0, 10);
+  return seoulDateKey(date);
 }
 
 export function formatDateTime(iso: string | null | undefined): string {

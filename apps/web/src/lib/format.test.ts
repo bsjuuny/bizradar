@@ -35,6 +35,15 @@ describe("formatDate", () => {
     expect(formatDate("2026-08-04T08:25:58+00:00")).toBe("2026-08-04");
   });
 
+  it("uses the Seoul calendar day, not the UTC one", () => {
+    // A 08:30 KST G2B notice is stored as 23:30 UTC the previous day.
+    expect(formatDate("2026-10-11T23:30:00+00:00")).toBe("2026-10-12");
+  });
+
+  it("passes a date-only value through unchanged", () => {
+    expect(formatDate("2026-10-12")).toBe("2026-10-12");
+  });
+
   it("returns an em dash for null/empty", () => {
     expect(formatDate(null)).toBe("—");
     expect(formatDate("")).toBe("—");
