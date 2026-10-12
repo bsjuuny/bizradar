@@ -18,10 +18,12 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from worker.config import get_settings
 from worker.notify.telegram import send_telegram_message
 from worker.repositories.watch_digest import (
+    RECENT_OPPORTUNITIES_LIMIT,
     get_active_watch_conditions,
     get_already_sent,
     get_companies_with_telegram,
@@ -32,6 +34,7 @@ from worker.repositories.watch_digest import (
 
 logger = logging.getLogger(__name__)
 
+SEOUL = ZoneInfo("Asia/Seoul")
 DIGEST_WINDOW_HOURS = 24
 # 텔레그램 sendMessage의 상한은 4,096자다. 그 숫자를 그대로 쓰지 않는 이유:
 # 상한은 UTF-16 코드 유닛 기준이라 한글에서 파이썬 len()과 어긋나고, 제목·기관명은
@@ -297,13 +300,34 @@ def _format_messages(
     return bodies
 
 
+def _log_finished(started_at: datetime, status: str, **fields: Any) -> None:
+    """회차마다 정확히 한 줄 남기는 요약. 건너뛴 회차도 이유(reason)와 함께 남긴다.
+
+    2026-10-12에 다이제스트가 "no opportunities posted in the lookback window" 한 줄로
+    조용히 끝났는데, 조회 범위도 건수도 없어서 원인(G2B 수집이 9시간 늦게 돌던 것)을
+    찾으려면 수집 로그를 따로 뒤져야 했다. 메시지가 안 온 날 이 한 줄만 보면 어느
+    단계에서 왜 멈췄는지 알 수 있게 한다.
+    """
+    logger.info(
+        "digest job finished",
+        extra={
+            "job": "digest",
+            "status": status,
+            "duration": (datetime.now(UTC) - started_at).total_seconds(),
+            **fields,
+        },
+    )
+
+
 def run() -> None:
     started_at = datetime.now(UTC)
     sent_count = 0
+    failed_count = 0
     try:
         companies = get_companies_with_telegram()
         if not companies:
             logger.info("digest: no companies with telegram_chat_id configured, skipping")
+            _log_finished(started_at, "skipped", reason="no_company_with_telegram")
             return
 
         company_ids = [c["id"] for c in companies]
@@ -312,13 +336,44 @@ def run() -> None:
         active_company_ids = [cid for cid in company_ids if watches_by_company.get(cid)]
         if not active_company_ids:
             logger.info("digest: no company has an active watch condition, skipping")
+            _log_finished(
+                started_at,
+                "skipped",
+                reason="no_active_watch",
+                companies_with_telegram=len(companies),
+            )
             return
 
         since = started_at - timedelta(hours=DIGEST_WINDOW_HOURS)
+        window = {
+            "window_start": since.astimezone(SEOUL).isoformat(timespec="minutes"),
+            "window_end": started_at.astimezone(SEOUL).isoformat(timespec="minutes"),
+        }
         opportunities = get_recent_opportunities(since)
         if not opportunities:
-            logger.info("digest: no opportunities posted in the lookback window")
+            # 공고가 실제로 없었는지(주말·연휴) 수집이 못 따라온 건지는 같은 범위의
+            # "g2b job finished" collected/window_* 와 맞춰 보면 갈린다.
+            logger.info(
+                "digest: no opportunities posted in the lookback window",
+                extra={"job": "digest", **window},
+            )
+            _log_finished(
+                started_at,
+                "skipped",
+                reason="no_opportunities_in_window",
+                companies_with_active_watch=len(active_company_ids),
+                opportunities_in_window=0,
+                **window,
+            )
             return
+        # 상한을 채웠으면 범위 안의 더 오래된 공고는 아예 검토되지 않는다 - 그 경우
+        # "매칭 0건"이 조건 탓이 아닐 수 있다.
+        window_limit_hit = len(opportunities) >= RECENT_OPPORTUNITIES_LIMIT
+        if window_limit_hit:
+            logger.warning(
+                "digest: lookback window hit the row limit, older opportunities not considered",
+                extra={"job": "digest", "limit": RECENT_OPPORTUNITIES_LIMIT, **window},
+            )
 
         opportunity_ids = [o["id"] for o in opportunities]
         scores = get_match_scores(active_company_ids, opportunity_ids)
@@ -346,7 +401,22 @@ def run() -> None:
                 if matched_names:
                     matches.append((opportunity, matched_names))
 
+            # 회사별 결과 한 줄 - 안 보낸 이유가 "이미 보냄"인지 "조건 불일치"인지
+            # "전송 실패"인지를 건수로 가른다. chat_id(개인 식별자)는 남기지 않는다.
+            company_result: dict[str, Any] = {
+                "job": "digest",
+                "company_id": company_id,
+                "watches": len(watches),
+                "watches_with_criteria": sum(1 for w in watches if _has_watch_criteria(w)),
+                "in_window": len(opportunities),
+                "already_sent": len(already_sent),
+                "matched": len(matches),
+            }
             if not matches:
+                logger.info(
+                    "digest: nothing new to send for a company",
+                    extra={**company_result, "outcome": "no_new_match"},
+                )
                 continue
 
             # 상한만큼만 골라 싣는다. 못 실은 건은 건수만 알리고 mark_sent 하지 않아
@@ -359,6 +429,8 @@ def run() -> None:
             # 전달되면 2개분만 발송 완료가 되고 나머지는 다음 회차에 다시 시도된다
             # (전체를 한 번에 기록하면 못 본 건이 영구 유실된다).
             delivered_any = False
+            messages_sent = 0
+            send_failed = False
             score_by_id = {
                 opportunity_id: score
                 for (scored_company_id, opportunity_id), score in scores.items()
@@ -374,6 +446,7 @@ def run() -> None:
                 if send_telegram_message(company["telegram_chat_id"], message):
                     mark_sent(company_id, delivered_ids)
                     delivered_any = True
+                    messages_sent += 1
                     continue
                 # send_telegram_message logs status/detail but not chat_id (a Telegram
                 # personal identifier) or company_id - log our own internal id here to
@@ -382,20 +455,36 @@ def run() -> None:
                 logger.warning(
                     "digest: send failed for a company", extra={"company_id": company_id}
                 )
+                send_failed = True
                 break
             if delivered_any:
                 sent_count += 1
-    except Exception:
-        logger.exception("digest job failed entirely", extra={"job": "digest", "status": "failed"})
+            if send_failed:
+                failed_count += 1
+            logger.info(
+                "digest: company result",
+                extra={
+                    **company_result,
+                    "selected": len(selected),
+                    "not_included": remaining,
+                    "messages_sent": messages_sent,
+                    "outcome": "send_failed" if send_failed else "sent",
+                },
+            )
+    except Exception as exc:
+        logger.exception(
+            "digest job failed entirely",
+            extra={"job": "digest", "status": "failed", "error_type": type(exc).__name__},
+        )
         return
 
-    duration_seconds = (datetime.now(UTC) - started_at).total_seconds()
-    logger.info(
-        "digest job finished",
-        extra={
-            "job": "digest",
-            "status": "ok",
-            "duration": duration_seconds,
-            "companies_notified": sent_count,
-        },
+    _log_finished(
+        started_at,
+        "partial" if failed_count else "ok",
+        companies_notified=sent_count,
+        companies_send_failed=failed_count,
+        companies_with_active_watch=len(active_company_ids),
+        opportunities_in_window=len(opportunities),
+        window_limit_hit=window_limit_hit,
+        **window,
     )

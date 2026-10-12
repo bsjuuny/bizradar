@@ -14,6 +14,7 @@ import logging
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 from pydantic import BaseModel
@@ -34,6 +35,24 @@ OPERATION = "getBidPblancListInfoServc"
 DEFAULT_PAGE_SIZE = 100
 REQUEST_TIMEOUT_SECONDS = 15.0
 MAX_RETRIES = 3
+SEOUL = ZoneInfo("Asia/Seoul")
+# How much of an error response body goes into the exception/log. data.go.kr explains
+# auth and quota failures only in the body (e.g. SERVICE_KEY_IS_NOT_REGISTERED_ERROR
+# behind a bare 403), so the status code alone doesn't say what went wrong.
+ERROR_BODY_PREVIEW_CHARS = 300
+
+
+def to_seoul(value: datetime) -> datetime:
+    """The query window as the API reads it: Korea Standard Time wall-clock.
+
+    inqryBgnDt/inqryEndDt carry no offset and G2B interprets them as KST. Formatting an
+    aware UTC value directly made every hourly run query a window nine hours in the past
+    (2026-10-12: Monday-morning notices missed the 09:00 digest). Aware values are
+    converted; naive ones are taken to already be KST wall-clock time.
+    """
+    if value.tzinfo is None:
+        return value.replace(tzinfo=SEOUL)
+    return value.astimezone(SEOUL)
 
 
 class G2BNormalizedOpportunity(BaseModel):
@@ -152,9 +171,11 @@ class G2BCollector(BaseCollector[G2BNormalizedOpportunity]):
         # set in scheduled production runs.
         self.max_records = max_records
 
-        now = datetime.now(UTC)
-        self.since = since or now.replace(hour=0, minute=0, second=0, microsecond=0)
-        self.until = until or now
+        now = datetime.now(SEOUL)
+        self.since = (
+            to_seoul(since) if since else now.replace(hour=0, minute=0, second=0, microsecond=0)
+        )
+        self.until = to_seoul(until) if until else now
 
     def __enter__(self) -> G2BCollector:
         return self
@@ -201,7 +222,12 @@ class G2BCollector(BaseCollector[G2BNormalizedOpportunity]):
                 last_error = exc
                 logger.warning(
                     "g2b: transport error, retrying",
-                    extra={"attempt": attempt, "page_no": page_no, "error": str(exc)},
+                    extra={
+                        "attempt": attempt,
+                        "page_no": page_no,
+                        "error_type": type(exc).__name__,
+                        "error": str(exc),
+                    },
                 )
             except httpx.HTTPStatusError as exc:
                 last_error = exc
@@ -211,9 +237,16 @@ class G2BCollector(BaseCollector[G2BNormalizedOpportunity]):
                         extra={"attempt": attempt, "page_no": page_no},
                     )
                     continue
-                raise CollectorError(f"G2B API HTTP error: {exc}") from exc
+                # Not str(exc): that is the request URL (serviceKey included) and no body.
+                raise CollectorError(
+                    f"G2B API HTTP {exc.response.status_code} on page {page_no}: "
+                    f"{exc.response.text[:ERROR_BODY_PREVIEW_CHARS]!r}"
+                ) from exc
 
-        raise CollectorError(f"G2B API request failed after {MAX_RETRIES} attempts: {last_error}")
+        raise CollectorError(
+            f"G2B API request failed after {MAX_RETRIES} attempts on page {page_no}: "
+            f"{type(last_error).__name__}: {last_error}"
+        )
 
     def collect(self) -> Iterable[RawRecord]:
         page_no = 1

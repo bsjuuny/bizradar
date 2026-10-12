@@ -62,7 +62,14 @@ def get_active_watch_conditions(company_ids: list[str]) -> dict[str, list[dict[s
     return by_company
 
 
-def get_recent_opportunities(since: datetime, limit: int = 200) -> list[dict[str, Any]]:
+# The digest job logs when a window fills this cap - older rows in the window are then
+# never considered, which otherwise looks exactly like "nothing matched".
+RECENT_OPPORTUNITIES_LIMIT = 200
+
+
+def get_recent_opportunities(
+    since: datetime, limit: int = RECENT_OPPORTUNITIES_LIMIT
+) -> list[dict[str, Any]]:
     """Opportunities posted since `since`, newest first. Mirrors the lookback window in
     apps/web/src/lib/digest.ts's in-app version - keep the two in sync if this changes."""
     client = get_service_client()

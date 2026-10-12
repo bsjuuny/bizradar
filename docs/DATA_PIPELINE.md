@@ -63,6 +63,26 @@ all handled in `parse_response_body()` without crashing. `max_records` exists
 specifically for small live-mode test runs (section 46 of the original spec) - never set
 it in the scheduled job (`worker/jobs/g2b_job.py`, hourly, 2-hour lookback window).
 
+`inqryBgnDt`/`inqryEndDt` are KST wall-clock time with no offset. The window is computed
+in Asia/Seoul and `G2BCollector` converts any aware value with `to_seoul()` before
+formatting. Until 2026-10-12 the job passed aware UTC values that were formatted as-is,
+so every run queried a window nine hours in the past: nothing was lost, but notices
+arrived nine hours late (collection peaked overnight, ~0 during office hours) and
+morning notices missed the 09:00 digest. Every run logs the window it queried
+(`window_start`/`window_end` on `g2b job finished` and on the failure line), and an HTTP
+error carries the status code and the start of the response body - data.go.kr explains
+key/quota failures only there (e.g. `SERVICE_KEY_IS_NOT_REGISTERED_ERROR` behind a 403).
+A missed stretch (downtime, or a fix to the window like this one) is backfilled with a
+one-off run; upserts are idempotent:
+
+    python -m worker.jobs.g2b_job --lookback-hours 12   # repo root, reads the vault
+
+Stored `posted_at`/`bid_close_at`/`open_at` are a separate, still-open problem: G2B's
+naive KST strings are written to `timestamptz` without an offset, so Postgres stores them
+as UTC and every G2B timestamp is nine hours late (a 12:00 deadline shows as 21:00 KST).
+Fixing the parser alone would mix shifted and correct rows - it needs a backfill of the
+existing rows in the same change.
+
 Verified live end-to-end (2026-08-07): real API -> real `opportunities` table, Korean
 text intact, re-running the same window upserts in place (row count unchanged, only
 `updated_at` moves) - see `docs/VERIFICATION_REPORT.md`.

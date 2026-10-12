@@ -1,5 +1,5 @@
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import httpx
@@ -245,3 +245,75 @@ def test_run_isolates_persist_failure(monkeypatch):
     assert result.collected == 5
     assert result.persisted == 4
     assert result.failed == 1
+
+
+def test_build_url_queries_the_kst_window_for_an_aware_utc_range():
+    # 2026-10-12 regression: the job passed aware UTC datetimes and _build_url formatted
+    # them as-is, so G2B (which reads inqryBgnDt/EndDt as KST) was queried for a window
+    # nine hours in the past - Monday-morning notices missed the 09:00 digest.
+    collector = G2BCollector(
+        settings=_settings(),
+        since=datetime(2026, 10, 12, 1, 0, tzinfo=UTC),
+        until=datetime(2026, 10, 12, 3, 0, tzinfo=UTC),
+    )
+
+    url = collector._build_url(1)
+
+    assert "inqryBgnDt=202610121000" in url
+    assert "inqryEndDt=202610121200" in url
+
+
+def test_build_url_takes_a_naive_datetime_as_kst_wall_clock():
+    collector = G2BCollector(
+        settings=_settings(),
+        since=datetime(2026, 10, 12, 9, 0),
+        until=datetime(2026, 10, 12, 11, 0),
+    )
+
+    url = collector._build_url(1)
+
+    assert "inqryBgnDt=202610120900" in url
+    assert "inqryEndDt=202610121100" in url
+
+
+def test_default_window_starts_at_kst_midnight():
+    collector = G2BCollector(settings=_settings())
+
+    assert collector.since.utcoffset() == timedelta(hours=9)
+    assert (collector.since.hour, collector.since.minute) == (0, 0)
+    assert collector.until.utcoffset() == timedelta(hours=9)
+
+
+def test_http_error_reports_status_and_body_but_not_the_url():
+    # data.go.kr explains auth failures only in the body behind a bare 403/401; the
+    # request URL carries the service key, so it must not be in the message.
+    error_body = (
+        '{"OpenAPI_ServiceResponse":{"cmmMsgHeader":'
+        '{"errMsg":"SERVICE ERROR","returnAuthMsg":"SERVICE_KEY_IS_NOT_REGISTERED_ERROR"}}}'
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text=error_body)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    collector = G2BCollector(settings=_settings(), client=client)
+
+    with pytest.raises(CollectorError) as excinfo:
+        list(collector.collect())
+
+    message = str(excinfo.value)
+    assert "403" in message
+    assert "SERVICE_KEY_IS_NOT_REGISTERED_ERROR" in message
+    assert "test-key" not in message
+    assert "serviceKey" not in message
+
+
+def test_transport_failures_report_the_error_type_after_retries():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused")
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    collector = G2BCollector(settings=_settings(), client=client)
+
+    with pytest.raises(CollectorError, match="ConnectError: connection refused"):
+        list(collector.collect())

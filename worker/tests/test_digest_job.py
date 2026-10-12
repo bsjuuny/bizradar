@@ -423,3 +423,139 @@ def test_run_passes_the_configured_web_url_through_to_the_message(monkeypatch):
     body = "\n".join(sent_messages)
     assert "2건 더 있어요" in body
     assert "전체 목록 보기: https://example.test/opportunities" in body
+
+
+def _finished_record(caplog):
+    records = [r for r in caplog.records if r.message == "digest job finished"]
+    assert len(records) == 1
+    return records[0]
+
+
+def test_empty_window_logs_why_it_skipped_and_which_window(monkeypatch, caplog):
+    # 2026-10-12: the digest ended with one bare line and no window, which hid that G2B
+    # collection was running nine hours behind.
+    monkeypatch.setattr(
+        digest_job,
+        "get_companies_with_telegram",
+        lambda: [{"id": "company-1", "name": "Acme", "telegram_chat_id": "111"}],
+    )
+    monkeypatch.setattr(
+        digest_job,
+        "get_active_watch_conditions",
+        lambda ids: {"company-1": [_watch(category="LIKELY_IT")]},
+    )
+    monkeypatch.setattr(digest_job, "get_recent_opportunities", lambda since: [])
+
+    with caplog.at_level(logging.INFO):
+        digest_job.run()
+
+    finished = _finished_record(caplog)
+    assert finished.status == "skipped"
+    assert finished.reason == "no_opportunities_in_window"
+    assert finished.opportunities_in_window == 0
+    assert finished.window_start.endswith("+09:00")
+    assert finished.window_end.endswith("+09:00")
+
+
+def test_no_active_watch_logs_a_skipped_summary(monkeypatch, caplog):
+    monkeypatch.setattr(
+        digest_job,
+        "get_companies_with_telegram",
+        lambda: [{"id": "company-1", "name": "Acme", "telegram_chat_id": "111"}],
+    )
+    monkeypatch.setattr(digest_job, "get_active_watch_conditions", lambda ids: {})
+
+    with caplog.at_level(logging.INFO):
+        digest_job.run()
+
+    finished = _finished_record(caplog)
+    assert finished.status == "skipped"
+    assert finished.reason == "no_active_watch"
+
+
+def test_company_result_explains_why_nothing_was_sent(monkeypatch, caplog):
+    companies = [{"id": "company-1", "name": "Acme", "telegram_chat_id": "111"}]
+    monkeypatch.setattr(digest_job, "get_companies_with_telegram", lambda: companies)
+    monkeypatch.setattr(
+        digest_job,
+        "get_active_watch_conditions",
+        lambda ids: {"company-1": [_watch(category="LIKELY_IT")]},
+    )
+    opportunities = [
+        _opp(id_="opp-1", category="LIKELY_IT"),
+        _opp(id_="opp-2", category="UNKNOWN"),
+    ]
+    monkeypatch.setattr(digest_job, "get_recent_opportunities", lambda since: opportunities)
+    monkeypatch.setattr(digest_job, "get_match_scores", lambda cids, oids: {})
+    monkeypatch.setattr(digest_job, "get_already_sent", lambda cid, oids: {"opp-1"})
+    monkeypatch.setattr(
+        digest_job,
+        "send_telegram_message",
+        lambda *a, **kw: (_ for _ in ()).throw(AssertionError()),
+    )
+
+    with caplog.at_level(logging.INFO):
+        digest_job.run()
+
+    result = next(r for r in caplog.records if r.message.startswith("digest: nothing new"))
+    assert result.company_id == "company-1"
+    assert (result.in_window, result.already_sent, result.matched) == (2, 1, 0)
+    assert result.outcome == "no_new_match"
+    assert not hasattr(result, "telegram_chat_id")
+    finished = _finished_record(caplog)
+    assert finished.status == "ok"
+    assert finished.companies_notified == 0
+    assert finished.opportunities_in_window == 2
+
+
+def test_send_failure_marks_the_run_partial(monkeypatch, caplog):
+    _patch_settings(monkeypatch)
+    companies = [{"id": "company-1", "name": "Acme", "telegram_chat_id": "111"}]
+    monkeypatch.setattr(digest_job, "get_companies_with_telegram", lambda: companies)
+    monkeypatch.setattr(
+        digest_job,
+        "get_active_watch_conditions",
+        lambda ids: {"company-1": [_watch(category="LIKELY_IT")]},
+    )
+    monkeypatch.setattr(
+        digest_job, "get_recent_opportunities", lambda since: [_opp(category="LIKELY_IT")]
+    )
+    monkeypatch.setattr(digest_job, "get_match_scores", lambda cids, oids: {})
+    monkeypatch.setattr(digest_job, "get_already_sent", lambda cid, oids: set())
+    monkeypatch.setattr(digest_job, "send_telegram_message", lambda chat_id, text: False)
+    monkeypatch.setattr(digest_job, "mark_sent", lambda cid, oids: None)
+
+    with caplog.at_level(logging.INFO):
+        digest_job.run()
+
+    result = next(r for r in caplog.records if r.message == "digest: company result")
+    assert result.outcome == "send_failed"
+    assert result.messages_sent == 0
+    finished = _finished_record(caplog)
+    assert finished.status == "partial"
+    assert finished.companies_send_failed == 1
+
+
+def test_a_full_window_is_flagged(monkeypatch, caplog):
+    _patch_settings(monkeypatch)
+    monkeypatch.setattr(digest_job, "RECENT_OPPORTUNITIES_LIMIT", 2)
+    companies = [{"id": "company-1", "name": "Acme", "telegram_chat_id": "111"}]
+    monkeypatch.setattr(digest_job, "get_companies_with_telegram", lambda: companies)
+    monkeypatch.setattr(
+        digest_job,
+        "get_active_watch_conditions",
+        lambda ids: {"company-1": [_watch(category="NON_IT")]},
+    )
+    monkeypatch.setattr(
+        digest_job,
+        "get_recent_opportunities",
+        lambda since: [_opp(id_="opp-1"), _opp(id_="opp-2")],
+    )
+    monkeypatch.setattr(digest_job, "get_match_scores", lambda cids, oids: {})
+    monkeypatch.setattr(digest_job, "get_already_sent", lambda cid, oids: set())
+
+    with caplog.at_level(logging.INFO):
+        digest_job.run()
+
+    assert any("hit the row limit" in r.message for r in caplog.records)
+    assert _finished_record(caplog).window_limit_hit is True
