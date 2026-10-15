@@ -317,9 +317,19 @@ tests total): 49/50/64/65/79/80/100, plus named scenarios (완전 일치/기술 
 범위 초과/지역 불일치/경험 없음/조건 부족).
 
 `worker/jobs/match_job.py` recomputes every `(company, analyzed opportunity)` pair on
-every run (no incremental/dirty-tracking needed - scoring is fast and deterministic) and
-upserts into `match_scores` via `worker/repositories/match_scores.py`. Scheduled every 15
-minutes in `worker/scheduler/main.py`.
+every run (scoring is fast and deterministic) and upserts into `match_scores` via
+`worker/repositories/match_scores.py`. Scheduled every 15 minutes in
+`worker/scheduler/main.py`.
+
+Writes only the pairs whose score changed, 500 rows per request (2026-10-15). It reads the
+stored scores first (paged, ~7 requests) and compares the 7 category scores rounded to 6
+decimals. Before this every pair was its own upsert: 5,898 requests per run, ~570k a day,
+~97% of the worker's Supabase traffic - while ~95% of scores were unchanged (live
+2026-10-15: 5,949 same, 333 changed, all `schedule_score` drifting as deadlines near).
+If the stored scores can't be read, every pair is written as before. A failed chunk is
+retried row by row; after 5 failures in a row the rest are counted failed unattempted.
+`match job finished` logs `computed`, `written`, `unchanged`, `failed`. `computed_at`
+therefore now means "last time the score changed", not "last run" - nothing reads it.
 
 Live-verified (2026-08-07): created a temporary realistic company profile directly via
 script (business_type "AI 개발사", budget 10M-200M, experience_years 5, one
@@ -412,6 +422,15 @@ by `max_records` (500 by default) - upserting on `(source, external_id)` makes
 re-fetching already-seen recent announcements harmless, same idempotency principle as
 G2B. Verified live end-to-end (2026-08-10): 500 real announcements collected and
 persisted, re-running immediately upserted in place (still 500 rows, no duplicates).
+
+Since 2026-10-15 the job reads every stored K-Startup row's `content_hash` + `recruiting`
+first (`fetch_kstartup_state`, ~2 paged requests) and skips re-fetched rows where both
+match; the rest go out 100 per request (`upsert_kstartup_programs`), a failed chunk
+retried row by row - the same scheme as 기업마당. It used to be 500 single-row upserts
+every hour; live that day all 500 were unchanged. K-Startup's `content_hash` covers the
+raw payload only, so after a rule or `normalize()` change the re-fetched rows no longer
+self-heal on the next run - `worker/jobs/support_reclassify.py` is the fix, as it already
+was for the older rows.
 
 **Investment-linked classification**: `worker/ai/investment_filter.py:is_investment_linked()`
 flags TIPS/엔젤투자/VC-adjacent programs via keyword matching over title + description,

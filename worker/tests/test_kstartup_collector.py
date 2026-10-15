@@ -271,3 +271,81 @@ def test_run_isolates_persist_failure(monkeypatch):
     assert result.collected == 5
     assert result.persisted == 4
     assert result.failed == 1
+
+
+def _three_program_collector(stored=None) -> KStartupCollector:
+    page = {
+        "data": [
+            {"pbanc_sn": 1, "biz_pbanc_nm": "first", "rcrt_prgs_yn": "Y"},
+            {"pbanc_sn": 2, "biz_pbanc_nm": "second", "rcrt_prgs_yn": "Y"},
+            {"pbanc_sn": 3, "biz_pbanc_nm": "third", "rcrt_prgs_yn": "Y"},
+        ],
+        "totalCount": 3,
+    }
+    client = httpx.Client(transport=httpx.MockTransport(lambda _r: httpx.Response(200, json=page)))
+    return KStartupCollector(settings=_settings(), client=client, max_records=None, stored=stored)
+
+
+def test_run_skips_unchanged_rows_and_writes_the_rest_in_one_request(monkeypatch):
+    from worker.collectors.kstartup import StoredRow
+    from worker.repositories import support_programs
+
+    probe = _three_program_collector()
+    fresh = {r.external_id: probe.normalize(r) for r in probe.collect()}
+    stored = {
+        # same payload, same recruiting state -> skipped
+        "1": StoredRow(fresh["1"].content_hash, True),
+        # recruiting closed since -> rewritten
+        "2": StoredRow(fresh["2"].content_hash, False),
+        # "3" is new -> written
+    }
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        support_programs,
+        "upsert_kstartup_programs",
+        lambda programs: calls.append([p.external_id for p in programs]),
+    )
+
+    collector = _three_program_collector(stored)
+    result = collector.run()
+
+    assert calls == [["2", "3"]]
+    assert collector.unchanged == 1
+    assert (result.collected, result.persisted, result.failed) == (3, 3, 0)
+
+
+def test_run_without_stored_state_writes_every_row(monkeypatch):
+    from worker.repositories import support_programs
+
+    calls: list[list[str]] = []
+    monkeypatch.setattr(
+        support_programs,
+        "upsert_kstartup_programs",
+        lambda programs: calls.append([p.external_id for p in programs]),
+    )
+
+    collector = _three_program_collector(None)
+    collector.run()
+
+    assert calls == [["1", "2", "3"]]
+    assert collector.unchanged == 0
+
+
+def test_run_retries_a_failed_chunk_row_by_row(monkeypatch):
+    from worker.repositories import support_programs
+
+    calls: list[list[str]] = []
+
+    def upsert(programs):
+        ids = [p.external_id for p in programs]
+        calls.append(ids)
+        if len(ids) > 1 or ids == ["2"]:
+            raise RuntimeError("simulated DB failure")
+
+    monkeypatch.setattr(support_programs, "upsert_kstartup_programs", upsert)
+
+    result = _three_program_collector(None).run()
+
+    assert calls == [["1", "2", "3"], ["1"], ["2"], ["3"]]
+    assert (result.persisted, result.failed) == (2, 1)
+    assert result.errors[0].startswith("2:")

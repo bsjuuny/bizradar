@@ -9,6 +9,7 @@ docs/DATABASE.md). Fetching flat and joining in Python is more code but no surpr
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from typing import Any, cast
 
@@ -149,17 +150,67 @@ def get_analyzed_opportunities() -> list[tuple[str, OpportunityRequirements]]:
     return results
 
 
-def upsert_match_score(company_id: str, opportunity_id: str, score: MatchScore) -> None:
+# Score columns in MatchScore field order. A stored row and a fresh score compare equal
+# when these match - the job then skips the write (worker/jobs/match_job.py).
+SCORE_COLUMNS = (
+    "technology_score",
+    "business_type_score",
+    "budget_score",
+    "experience_score",
+    "qualification_score",
+    "region_score",
+    "schedule_score",
+)
+
+type ScoreValues = tuple[float, ...]
+
+
+def score_values(score: MatchScore) -> ScoreValues:
+    # Rounded so float noise (technology is a ratio x 30, e.g. 10.000000000000002) or a
+    # numeric round trip through PostgREST can't make an unchanged score look changed.
+    return tuple(
+        round(float(v), 6)
+        for v in (
+            score.technology,
+            score.business_type,
+            score.budget,
+            score.experience,
+            score.qualification,
+            score.region,
+            score.schedule,
+        )
+    )
+
+
+def get_existing_scores() -> dict[tuple[str, str], ScoreValues]:
+    """(company_id, opportunity_id) -> stored score values, for every match_scores row.
+    ~6,700 rows on 2026-10-15, i.e. 7 paged requests - against the ~5,900 single-row
+    upserts every 15 minutes it replaces for the unchanged pairs."""
     client = get_service_client()
-    row: dict[str, Any] = {
-        "company_id": company_id,
-        "opportunity_id": opportunity_id,
-        "technology_score": score.technology,
-        "business_type_score": score.business_type,
-        "budget_score": score.budget,
-        "experience_score": score.experience,
-        "qualification_score": score.qualification,
-        "region_score": score.region,
-        "schedule_score": score.schedule,
+    rows = _fetch_all_pages(
+        lambda: client.table("match_scores").select(
+            "id, company_id, opportunity_id, " + ", ".join(SCORE_COLUMNS)
+        ),
+        key="id",
+    )
+    return {
+        (row["company_id"], row["opportunity_id"]): tuple(
+            round(float(row[column]), 6) for column in SCORE_COLUMNS
+        )
+        for row in rows
     }
-    client.table("match_scores").upsert(row, on_conflict="company_id,opportunity_id").execute()
+
+
+def upsert_match_scores(scores: Sequence[tuple[str, str, MatchScore]]) -> None:
+    """One request for all of `scores` - (company_id, opportunity_id, score) - callers
+    chunk them. Every row has the same keys, as a multi-row upsert requires."""
+    if not scores:
+        return
+    rows: list[dict[str, Any]] = []
+    for company_id, opportunity_id, score in scores:
+        row: dict[str, Any] = {"company_id": company_id, "opportunity_id": opportunity_id}
+        row.update(zip(SCORE_COLUMNS, score_values(score), strict=True))
+        rows.append(row)
+    get_service_client().table("match_scores").upsert(
+        rows, on_conflict="company_id,opportunity_id"
+    ).execute()

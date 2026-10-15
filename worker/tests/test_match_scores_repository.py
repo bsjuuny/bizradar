@@ -186,3 +186,42 @@ def test_get_analyzed_opportunities_pages_when_server_cap_is_below_page_size(mon
 
     assert len(results) == 700
     assert all(size <= 200 for size in fake_client.analyses_page_sizes)
+
+
+def test_score_values_absorbs_float_noise():
+    from worker.matching.engine import MatchScore
+
+    noisy = MatchScore(10.000000000000002, 0.0, 15, 15.0, 10.0, 5.0, 3.59)
+    assert match_scores.score_values(noisy) == (10.0, 0.0, 15.0, 15.0, 10.0, 5.0, 3.59)
+
+
+def test_upsert_match_scores_sends_one_request_with_every_row(monkeypatch):
+    from worker.matching.engine import MatchScore
+
+    sent: list[tuple[list[dict[str, Any]], str]] = []
+
+    class _Table:
+        def upsert(self, rows, on_conflict):
+            sent.append((rows, on_conflict))
+            return self
+
+        def execute(self):
+            return _FakeResult([])
+
+    class _Client:
+        def table(self, name):
+            assert name == "match_scores"
+            return _Table()
+
+    monkeypatch.setattr(match_scores, "get_service_client", lambda: _Client())
+    score = MatchScore(30.0, 0.0, 15.0, 15.0, 10.0, 5.0, 3.6)
+
+    match_scores.upsert_match_scores([("c1", "o1", score), ("c2", "o1", score)])
+    match_scores.upsert_match_scores([])  # nothing to write -> no request
+
+    assert len(sent) == 1
+    rows, on_conflict = sent[0]
+    assert on_conflict == "company_id,opportunity_id"
+    assert [(r["company_id"], r["opportunity_id"]) for r in rows] == [("c1", "o1"), ("c2", "o1")]
+    assert rows[0]["schedule_score"] == 3.6
+    assert set(rows[0]) == {"company_id", "opportunity_id", *match_scores.SCORE_COLUMNS}

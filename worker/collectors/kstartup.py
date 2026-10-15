@@ -23,9 +23,9 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 from pydantic import BaseModel
@@ -35,6 +35,7 @@ from worker.ai.support_it_filter import is_it_related
 from worker.collectors.base import (
     BaseCollector,
     CollectorError,
+    CollectorRunResult,
     RawRecord,
     clean_line,
     compute_content_hash,
@@ -53,6 +54,18 @@ MAX_RETRIES = 3
 # fetch each run naturally covers new + recently-updated announcements without a date
 # filter. Larger than G2B's per-run volume since there's no lookback window to rely on.
 DEFAULT_MAX_RECORDS = 500
+# Changed rows go out this many per request (see KStartupCollector.run).
+UPSERT_CHUNK_SIZE = 100
+# After this many single-row failures in a row the failure is the database, not the rows.
+SYSTEMIC_FAILURE_ROWS = 5
+
+
+class StoredRow(NamedTuple):
+    """What a run needs to know about a K-Startup row already in the database
+    (worker/repositories/support_programs.fetch_kstartup_state)."""
+
+    content_hash: str
+    recruiting: bool | None
 
 
 class KStartupNormalizedProgram(BaseModel):
@@ -140,6 +153,7 @@ class KStartupCollector(BaseCollector[KStartupNormalizedProgram]):
         client: httpx.Client | None = None,
         page_size: int = DEFAULT_PAGE_SIZE,
         max_records: int | None = DEFAULT_MAX_RECORDS,
+        stored: Mapping[str, StoredRow] | None = None,
     ) -> None:
         self.settings = settings or get_settings()
         self._client = client
@@ -148,6 +162,12 @@ class KStartupCollector(BaseCollector[KStartupNormalizedProgram]):
         # Never None in scheduled use (unlike G2B's max_records, which is test-only) -
         # see module docstring for why this collector needs a bound every run.
         self.max_records = max_records
+        # external_id -> StoredRow, read by the job before the run; rows that match are not
+        # re-sent (see persist()). None: unknown, so every row is written.
+        self._stored = stored
+        # How many rows persist() skipped as unchanged this run.
+        self.unchanged = 0
+        self._pending: list[KStartupNormalizedProgram] = []
 
     def __enter__(self) -> KStartupCollector:
         return self
@@ -274,7 +294,67 @@ class KStartupCollector(BaseCollector[KStartupNormalizedProgram]):
     def validate(self, normalized: KStartupNormalizedProgram) -> bool:
         return bool(normalized.title)
 
-    def persist(self, normalized: KStartupNormalizedProgram) -> None:
-        from worker.repositories.support_programs import upsert_support_program
+    def run(self) -> CollectorRunResult:
+        """BaseCollector.run, then the changed rows persist() queued go out in chunks of
+        UPSERT_CHUNK_SIZE - one request per chunk instead of per row (500 single-row
+        upserts every hour until 2026-10-15, nearly all of them unchanged). A chunk that
+        fails is retried row by row, so one bad row costs only itself; those rows are
+        moved from persisted to failed."""
+        from worker.repositories.support_programs import upsert_kstartup_programs
 
-        upsert_support_program(normalized)
+        self.unchanged = 0
+        self._pending = []
+        result = super().run()
+        pending, self._pending = self._pending, []
+        consecutive_failures = 0
+        last_error = ""
+
+        def fail(normalized: KStartupNormalizedProgram, error: str) -> None:
+            result.persisted -= 1
+            result.failed += 1
+            result.errors.append(f"{normalized.external_id}: {error}")
+
+        for start in range(0, len(pending), UPSERT_CHUNK_SIZE):
+            chunk = pending[start : start + UPSERT_CHUNK_SIZE]
+            if consecutive_failures >= SYSTEMIC_FAILURE_ROWS:
+                for normalized in chunk:
+                    fail(normalized, f"not attempted after repeated failures: {last_error}")
+                continue
+            try:
+                upsert_kstartup_programs(chunk)
+                consecutive_failures = 0
+                continue
+            except Exception:
+                logger.warning("kstartup: chunk upsert failed, retrying row by row", exc_info=True)
+            for normalized in chunk:
+                if consecutive_failures >= SYSTEMIC_FAILURE_ROWS:
+                    fail(normalized, f"not attempted after repeated failures: {last_error}")
+                    continue
+                try:
+                    upsert_kstartup_programs([normalized])
+                    consecutive_failures = 0
+                except Exception as exc:  # noqa: BLE001 - isolate per-record failures
+                    consecutive_failures += 1
+                    last_error = str(exc)
+                    fail(normalized, last_error)
+                    logger.warning(
+                        "collector record failed",
+                        extra={"source": self.source, "external_id": normalized.external_id},
+                    )
+        return result
+
+    def persist(self, normalized: KStartupNormalizedProgram) -> None:
+        """Queues the row for run() to write, unless the stored row has the same
+        content_hash and recruiting state (all 500 of a 2026-10-15 run did). content_hash
+        covers the raw payload only, not the derived columns - after a rule or normalize()
+        change, run worker/jobs/support_reclassify.py as before; unchanged rows no longer
+        pick it up on the next hourly run."""
+        stored = self._stored.get(normalized.external_id) if self._stored is not None else None
+        if (
+            stored is not None
+            and stored.content_hash == normalized.content_hash
+            and stored.recruiting == normalized.recruiting
+        ):
+            self.unchanged += 1
+            return
+        self._pending.append(normalized)

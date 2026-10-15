@@ -13,6 +13,7 @@ from typing import Any, cast
 
 from worker.collectors.bizinfo import BizInfoNormalizedProgram, StoredRow
 from worker.collectors.kstartup import KStartupNormalizedProgram
+from worker.collectors.kstartup import StoredRow as KStartupStoredRow
 from worker.dedupe.support_programs import ProgramTitle
 from worker.repositories.opportunities import get_service_client
 from worker.repositories.paging import chunked, fetch_all_pages
@@ -50,11 +51,34 @@ def _common_row(
     }
 
 
-def upsert_support_program(normalized: KStartupNormalizedProgram) -> None:
-    client = get_service_client()
-    row = _common_row("kstartup", normalized)
-    row["supervising_type"] = normalized.supervising_type
-    client.table("support_programs").upsert(row, on_conflict="source,external_id").execute()
+def upsert_kstartup_programs(programs: Sequence[KStartupNormalizedProgram]) -> None:
+    """One request for all of `programs` (callers chunk them). Every row has the same keys,
+    as a multi-row upsert requires."""
+    if not programs:
+        return
+    rows = []
+    for normalized in programs:
+        row = _common_row("kstartup", normalized)
+        row["supervising_type"] = normalized.supervising_type
+        rows.append(row)
+    get_service_client().table("support_programs").upsert(
+        rows, on_conflict="source,external_id"
+    ).execute()
+
+
+def fetch_kstartup_state() -> dict[str, KStartupStoredRow]:
+    """external_id -> KStartupStoredRow for every K-Startup row (~1,100 on 2026-10-15, two
+    paged requests) - so the hourly run can skip the 500 re-fetched rows that haven't
+    changed."""
+    rows = _read_all(
+        "support_programs",
+        "id, external_id, content_hash, recruiting",
+        lambda query: query.eq("source", "kstartup"),
+    )
+    return {
+        row["external_id"]: KStartupStoredRow(row["content_hash"], row["recruiting"])
+        for row in rows
+    }
 
 
 def upsert_bizinfo_programs(programs: Sequence[BizInfoNormalizedProgram]) -> None:
