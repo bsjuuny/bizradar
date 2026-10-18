@@ -430,7 +430,10 @@ retried row by row - the same scheme as 기업마당. It used to be 500 single-r
 every hour; live that day all 500 were unchanged. K-Startup's `content_hash` covers the
 raw payload only, so after a rule or `normalize()` change the re-fetched rows no longer
 self-heal on the next run - `worker/jobs/support_reclassify.py` is the fix, as it already
-was for the older rows.
+was for the older rows. The PM2 scheduler now blocks K-Startup and BizInfo collection
+until the current code/database pair has a successful reviewed refresh checkpoint; see
+[SUPPORT_REFRESH.md](SUPPORT_REFRESH.md). This gate adds no Supabase requests to an
+approved hourly run, and does not change the matching job or collector hash semantics.
 
 **Investment-linked classification**: `worker/ai/investment_filter.py:is_investment_linked()`
 flags TIPS/엔젤투자/VC-adjacent programs via keyword matching over title + description,

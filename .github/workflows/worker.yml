@@ -1,0 +1,22 @@
+name: Worker safety checks
+on:
+  pull_request:
+    paths: ['worker/**', 'pyproject.toml', '.github/workflows/worker.yml']
+  push:
+    branches: [master]
+    paths: ['worker/**', 'pyproject.toml', '.github/workflows/worker.yml']
+permissions:
+  contents: read
+jobs:
+  offline-checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - run: ruff check worker
+      - run: ruff format --check worker
+      - run: pytest -q
+      - run: mypy worker

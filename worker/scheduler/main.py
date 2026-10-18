@@ -25,6 +25,7 @@ from worker.jobs import (  # noqa: E402
     g2b_job,
     kstartup_job,
     match_job,
+    support_refresh,
 )
 from worker.logging_config import configure_logging  # noqa: E402
 
@@ -52,9 +53,21 @@ def build_scheduler() -> BlockingScheduler:
 def main() -> None:
     scheduler = build_scheduler()
     settings = get_settings()
+    # Check on every PM2 start too; this reads only a local checkpoint, never Supabase.
+    try:
+        if not support_refresh.ready(support_refresh.identity()):
+            logger.error("support refresh required before K-Startup/BizInfo collection resumes")
+    except Exception:
+        logger.exception("support refresh configuration unavailable; support collection is blocked")
     scheduler.add_job(g2b_job.run, "interval", hours=1, id="g2b-collect")
     scheduler.add_job(g2b_award_job.run, "interval", hours=6, id="g2b-award-collect")
-    scheduler.add_job(kstartup_job.run, "interval", hours=1, id="kstartup-collect")
+    scheduler.add_job(
+        support_refresh.collect_if_ready,
+        "interval",
+        hours=1,
+        id="kstartup-collect",
+        args=[kstartup_job.run],
+    )
     # At :35 past every hour - a cron trigger, so a restart doesn't push it back. The
     # hourly interval jobs above fire relative to process start, so after some restarts
     # they land on :35 too; that is tolerable now. Spreading load was the first workaround
@@ -62,9 +75,10 @@ def main() -> None:
     # 2026-10-07, all jobs at :08); the actual fixes are the per-thread Supabase client
     # (repositories/opportunities.py) and writing only changed rows (BizInfoCollector).
     scheduler.add_job(
-        bizinfo_job.run,
+        support_refresh.collect_if_ready,
         CronTrigger(minute=35, timezone="Asia/Seoul"),
         id="bizinfo-collect",
+        args=[bizinfo_job.run],
     )
     scheduler.add_job(analyze_job.run, "interval", minutes=10, id="analyze")
     scheduler.add_job(match_job.run, "interval", minutes=15, id="match")
