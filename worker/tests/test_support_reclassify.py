@@ -168,6 +168,10 @@ def test_writes_only_changed_columns_of_changed_rows(repo):
         ),
     ]
     assert result == {
+        "failed": 0,
+        "scanned": 5,
+        "unchanged": 2,
+        "written": 3,
         "rows": 3,
         "category": 1,
         "it_related": 2,
@@ -235,7 +239,7 @@ def test_second_run_is_a_no_op(repo):
                     row.update(changes)
     repo.updates.clear()
 
-    assert support_reclassify.run() == {}
+    assert support_reclassify.run()["rows"] == 0
     assert repo.updates == []
 
 
@@ -275,4 +279,67 @@ def test_dates_are_re_derived_and_compared_as_instants(monkeypatch):
     # Once stored (as PostgREST strings), a second run sees nothing to do.
     unreadable_before.update(changes)
     fake.updates.clear()
-    assert support_reclassify.run() == {}
+    assert support_reclassify.run()["rows"] == 0
+
+
+def test_changed_unchanged_and_failed_are_separate(repo):
+    repo.rows["bizinfo"].append(_bizinfo_row("bad", "x") | {"raw_payload": "bad"})
+    result = support_reclassify.run(dry_run=True)
+    assert result["scanned"] == 6
+    assert result["rows"] == 3
+    assert result["unchanged"] == 2
+    assert result["failed"] == 1
+    assert result["written"] == 0
+    assert not repo.requests
+
+
+def test_write_failure_is_not_counted_as_written(repo, monkeypatch):
+    def fail(*args):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(repo, "update_programs", fail)
+    result = support_reclassify.run()
+    assert result["rows"] == 3
+    assert result["written"] == 0
+    assert result["failed"] == 1
+    assert result["pending"] == 2
+    assert not repo.requests
+
+
+def test_large_identical_change_stays_batched(repo):
+    repo.rows = {"kstartup": [_kstartup_row(id=f"ks-{i}") for i in range(251)], "bizinfo": []}
+    result = support_reclassify.run()
+    assert [len(ids) for ids, _ in repo.requests] == [100, 100, 51]
+    assert result["written"] == 251
+
+
+def test_partial_write_failure_preserves_counts(repo, monkeypatch):
+    repo.rows = {"kstartup": [_kstartup_row(id=f"ks-{i}") for i in range(251)], "bizinfo": []}
+    original = repo.update_programs
+
+    def update(ids, changes):
+        if repo.requests:
+            raise RuntimeError("database unavailable")
+        original(ids, changes)
+
+    monkeypatch.setattr(repo, "update_programs", update)
+    result = support_reclassify.run()
+    assert result["written"] == 100
+    assert result["failed"] == 100
+    assert result["pending"] == 51
+
+
+def test_invalid_empty_payload_is_not_written(repo):
+    repo.rows["kstartup"][0]["raw_payload"] = {}
+    result = support_reclassify.run(dry_run=True)
+    assert result["failed"] == 1
+    assert result["rows"] == 2
+    assert not repo.requests
+
+
+def test_plan_counts_include_both_sources(repo):
+    prepared = support_reclassify.prepare()
+    assert prepared.sources == {
+        "kstartup": {"scanned": 1, "rows": 1, "unchanged": 0, "failed": 0},
+        "bizinfo": {"scanned": 4, "rows": 2, "unchanged": 2, "failed": 0},
+    }

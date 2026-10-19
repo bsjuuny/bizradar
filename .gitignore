@@ -28,3 +28,6 @@ Thumbs.db
 # 커밋 대상이 아니다. 무시 규칙이 없어 실제로 커밋될 뻔했다.
 *.local-web.out.log
 *.local-web.err.log
+
+# Target-specific normalization approvals, plans and inter-process locks
+.support-refresh/

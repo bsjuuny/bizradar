@@ -7,8 +7,9 @@ re-sends a closed one, so those rows would never catch up. Run this after every 
 worker/ai/support_it_filter.py, worker/ai/investment_filter.py or a collector's
 normalize()/text handling:
 
-    python -m worker.jobs.support_reclassify --dry-run   # what would change
-    python -m worker.jobs.support_reclassify
+    python -m worker.jobs.support_reclassify --dry-run --plan .support-refresh/plan.json
+    # Review the target, source counts and changed columns before applying:
+    python -m worker.jobs.support_reclassify --apply-plan .support-refresh/plan.json
 
 (from the repo root; it reads the shared vault first, like the PM2 entrypoint).
 
@@ -25,11 +26,12 @@ closing/dedupe passes, not on the payload.
 
 from __future__ import annotations
 
-import argparse
+import hashlib
 import json
 import logging
 from collections import Counter
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
@@ -46,6 +48,8 @@ logger = logging.getLogger(__name__)
 class _Normalizer(Protocol):
     def normalize(self, raw: RawRecord) -> BaseModel: ...
 
+    def validate(self, normalized: Any) -> bool: ...
+
 
 def row_changes(
     row: Mapping[str, Any], source: str, collector: _Normalizer, columns: Sequence[str]
@@ -58,6 +62,8 @@ def row_changes(
             payload=row["raw_payload"],
         )
     )
+    if not collector.validate(normalized):
+        raise ValueError("Stored payload does not produce a valid program")
     changes: dict[str, Any] = {}
     for column in columns:
         wanted = getattr(normalized, column)
@@ -75,22 +81,33 @@ def _same_value(stored: Any, wanted: Any) -> bool:
     return bool(stored == wanted)
 
 
-def run(dry_run: bool = False) -> Counter[str]:
+@dataclass
+class Prepared:
+    counts: Counter[str]
+    groups: dict[str, tuple[dict[str, Any], list[str]]]
+    snapshot: str
+    sources: dict[str, dict[str, int]] = field(default_factory=dict)
+
+
+def prepare() -> Prepared:
     """Returns how many rows changed per column ("rows" = rows touched, "failed" = rows
     whose payload couldn't be re-derived and were left as they are)."""
     collectors: dict[str, _Normalizer] = {
         "kstartup": KStartupCollector(),
         "bizinfo": BizInfoCollector(),
     }
-    changed: Counter[str] = Counter()
-    scanned = 0
+    changed: Counter[str] = Counter(scanned=0, rows=0, unchanged=0, failed=0, written=0)
+    source_counts: dict[str, dict[str, int]] = {}
+    snapshots = []
     # Rows needing the identical change, written together: after a rule change most rows
     # differ by the same column value (e.g. {"it_related": true}).
     groups: dict[str, tuple[dict[str, Any], list[str]]] = {}
     for source, collector in collectors.items():
+        before = changed.copy()
         columns = support_programs.DERIVED_COLUMNS[source]
         for row in support_programs.fetch_programs_for_reclassify(source):
-            scanned += 1
+            changed["scanned"] += 1
+            snapshots.append((source, row))
             try:
                 changes = row_changes(row, source, collector, columns)
             except Exception:
@@ -103,35 +120,63 @@ def run(dry_run: bool = False) -> Counter[str]:
                 changed["failed"] += 1
                 continue
             if not changes:
+                changed["unchanged"] += 1
                 continue
             changed["rows"] += 1
             changed.update(changes.keys())
             key = json.dumps(changes, sort_keys=True, ensure_ascii=False)
             groups.setdefault(key, (changes, []))[1].append(row["id"])
 
-    if not dry_run:
-        for changes, row_ids in groups.values():
-            support_programs.update_programs(row_ids, changes)
+        source_counts[source] = {
+            key: changed[key] - before[key] for key in ("scanned", "rows", "unchanged", "failed")
+        }
 
-    logger.info(
-        "support_reclassify finished",
-        extra={"dry_run": dry_run, "scanned": scanned, **dict(changed)},
-    )
-    return changed
+    snapshot = hashlib.sha256(
+        json.dumps(
+            sorted(snapshots, key=lambda item: (item[0], item[1]["id"])),
+            sort_keys=True,
+            ensure_ascii=False,
+        ).encode()
+    ).hexdigest()
+    return Prepared(changed, groups, snapshot, source_counts)
+
+
+def apply(prepared: Prepared) -> Counter[str]:
+    result = prepared.counts.copy()
+    result["written"] = 0
+    # One failed chunk never claims successful writes; no row-by-row request explosion.
+    # Keep chunks at the repository's existing 100-id update bound.
+    for changes, row_ids in prepared.groups.values():
+        for start in range(0, len(row_ids), 100):
+            chunk = row_ids[start : start + 100]
+            try:
+                support_programs.update_programs(chunk, changes)
+                result["written"] += len(chunk)
+            except Exception:
+                result["failed"] += len(chunk)
+                logger.exception("support_reclassify: update chunk failed")
+                # Stop on a database error; remaining candidates stay pending on retry.
+                result["pending"] = (
+                    result["rows"]
+                    - result["written"]
+                    - (result["failed"] - prepared.counts["failed"])
+                )
+                return result
+    return result
+
+
+def run(dry_run: bool = False) -> Counter[str]:
+    prepared = prepare()
+    result = prepared.counts if dry_run else apply(prepared)
+    logger.info("support_reclassify finished", extra={"dry_run": dry_run, **dict(result)})
+    return result
 
 
 def main() -> None:
-    from worker.logging_config import configure_logging
-    from worker.secrets_loader import load_github_secrets
+    # Preserve the established command, but require the reviewed-plan deployment path.
+    from worker.jobs.support_refresh import main as refresh_main
 
-    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
-    parser.add_argument("--dry-run", action="store_true", help="report changes, write nothing")
-    args = parser.parse_args()
-    load_github_secrets()
-    configure_logging()
-    result = run(dry_run=args.dry_run)
-    verb = "would change" if args.dry_run else "changed"
-    print(f"{verb}: {dict(result) or 'nothing'}")
+    refresh_main()
 
 
 if __name__ == "__main__":

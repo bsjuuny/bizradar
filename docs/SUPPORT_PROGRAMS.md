@@ -289,12 +289,14 @@ words were read for misses, which added 디지털혁신, 디지털 품질(SW tes
 위치정보, 개인정보, 전자문서, 스마트시티, AIoT, ETRI, ChatGPT, 코딩 (17 programs). The 98 hits
 among closed K-Startup rows were read as well. Tests use those real titles.
 
-**Changing the rule (or any collector text handling) requires a reclassify run** - the
-column is written at collection time only, and K-Startup re-fetches just its newest 500:
+**Changing a rule or collector text handling requires a reviewed refresh**. The PM2
+scheduler now gates both support collectors on a target-specific code checkpoint. See
+[the deployment procedure](SUPPORT_REFRESH.md) before updating the worker:
 
 ```
-python -m worker.jobs.support_reclassify --dry-run
-python -m worker.jobs.support_reclassify
+python -m worker.jobs.support_reclassify --dry-run --plan .support-refresh/plan.json
+# Review the target and impact before running:
+python -m worker.jobs.support_reclassify --apply-plan .support-refresh/plan.json
 ```
 
 It re-runs each row's own collector `normalize()` on the stored `raw_payload` (K-Startup
@@ -338,6 +340,6 @@ pair-shows-its-open-row listing, the 기업마당 `last_seen_at` check) rolls ou
 1. `npx supabase db push` - before the web deploy. It only adds a check that every row
    already satisfies and replaces two functions with the same signatures, so applying it
    under the running worker and web is safe; the worker needs nothing new from it.
-2. `python -m worker.jobs.support_reclassify --dry-run`, then without `--dry-run` - the
+2. Follow [SUPPORT_REFRESH.md](SUPPORT_REFRESH.md) to review and apply a plan - the
    IT filter now also reads "IT" and 정보기술 (2 K-Startup rows on 2026-10-08).
 3. Push to `master`, then `pm2 restart bizradar-worker`.
