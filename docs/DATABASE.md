@@ -115,7 +115,7 @@ Implemented (Phase 1):
   `content_hash`. Unique on `(source, external_id)`. Rule-filter flags computed at
   collection, default `false`: `investment_linked` (TIPS/엔젤투자/etc) and `it_related`
   (`worker/ai/support_it_filter.py`) - changing either rule needs
-  `python -m worker.jobs.support_reclassify`. `duplicate_of` (nullable FK to
+  the reviewed plan/apply procedure in [SUPPORT_REFRESH.md](SUPPORT_REFRESH.md). `duplicate_of` (nullable FK to
   `support_programs.id`, never itself): the worker's hourly pairing of a 기업마당 row with
   the open K-Startup announcement it repeats. It is a pairing, not a "hide" flag - whether
   the copy is hidden depends on the original's state *now* and on what the reader filters

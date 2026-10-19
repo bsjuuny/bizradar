@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import logging
 import os
+import sys
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from importlib.util import resolve_name
 from pathlib import Path
 from typing import Any
 
@@ -19,14 +22,46 @@ STATE_DIR = ROOT / ".support-refresh"
 logger = logging.getLogger(__name__)
 
 
+# Follow support implementation imports, including helpers imported inside normalize().
+FINGERPRINT_ROOTS = (
+    "worker.collectors.kstartup",
+    "worker.collectors.bizinfo",
+    "worker.jobs.support_reclassify",
+    "worker.jobs.support_refresh",
+    "worker.repositories.support_programs",
+)
+
+
 def fingerprint() -> str:
-    # Conservative: include all worker implementation files, including new helpers and
-    # this gate. Tests are excluded. No git executable/history needed on the PM2 host.
+    pending = list(FINGERPRINT_ROOTS)
+    visited: dict[str, str] = {}
+    while pending:
+        module = pending.pop()
+        relative = module.replace(".", "/")
+        path = ROOT / (relative + ".py")
+        if not path.is_file():
+            path = ROOT / relative / "__init__.py"
+        if not path.is_file() or path.relative_to(ROOT).as_posix() in visited:
+            continue
+        name = path.relative_to(ROOT).as_posix()
+        source = path.read_text(encoding="utf-8")
+        visited[name] = source
+        # Package initialization can affect imports too.
+        pending.extend(".".join(module.split(".")[:i]) for i in range(1, len(module.split("."))))
+        package = module if path.name == "__init__.py" else module.rpartition(".")[0]
+        for node in ast.walk(ast.parse(source)):
+            imports: list[str] = []
+            if isinstance(node, ast.Import):
+                imports = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                base = node.module or ""
+                if node.level:
+                    base = resolve_name("." * node.level + base, package)
+                imports = [base, *(base + "." + alias.name for alias in node.names)]
+            pending.extend(name for name in imports if name.startswith("worker."))
     digest = hashlib.sha256()
-    for path in sorted((ROOT / "worker").rglob("*.py")):
-        if "tests" not in path.relative_to(ROOT / "worker").parts:
-            digest.update(str(path.relative_to(ROOT)).replace("\\", "/").encode())
-            digest.update(b"\0" + path.read_bytes() + b"\0")
+    for name, source in sorted(visited.items()):
+        digest.update(name.encode() + b"\0" + source.encode() + b"\0")
     return digest.hexdigest()
 
 
@@ -64,19 +99,35 @@ def write_json(path: Path, value: Any) -> None:
 
 @contextmanager
 def exclusive(info: dict[str, str]) -> Iterator[None]:
-    """Shared by collectors and the approval command, including separate PM2 processes.
+    """Kernel lock shared by collectors/CLI; released even if a process crashes.
 
-    An interrupted process leaves a lock: fail closed, never guess that it is stale.
+    Keep the lock file: unlinking a locked inode permits another process to lock a
+    replacement file while the original holder is still running (POSIX).
     """
     path = state_path(info).with_suffix(".lock")
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-    try:
-        os.write(fd, str(os.getpid()).encode())
-        yield
-    finally:
-        os.close(fd)
-        path.unlink()
+    with path.open("a+b") as handle:
+        if sys.platform == "win32":
+            import msvcrt
+
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            yield
+        finally:
+            if sys.platform == "win32":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def ready(info: dict[str, str]) -> bool:
@@ -128,10 +179,15 @@ def refresh(*, plan_path: Path, apply: bool = False) -> dict[str, Any]:
         result = support_reclassify.apply(prepared)
         if result["failed"]:
             raise RuntimeError(f"Refresh incomplete; no checkpoint written: {dict(result)}")
+        verified = support_reclassify.prepare()
+        if verified.counts["rows"] or verified.counts["failed"]:
+            raise RuntimeError(
+                f"Post-write verification failed; no checkpoint written: {dict(verified.counts)}"
+            )
         if identity() != info:
             raise RuntimeError("Code changed during refresh; no checkpoint written")
         write_json(state_path(info), info)
-        return {**plan, "applied": dict(result)}
+        return {**plan, "applied": dict(result), "verified": dict(verified.counts)}
 
 
 def main() -> None:

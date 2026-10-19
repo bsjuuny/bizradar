@@ -1,3 +1,5 @@
+import subprocess
+import sys
 from collections import Counter
 
 import pytest
@@ -16,8 +18,16 @@ def gate(tmp_path, monkeypatch):
         {"x": ({"it_related": True}, ["a", "b"])},
         "snapshot1",
     )
-    monkeypatch.setattr(support_reclassify, "prepare", lambda: prepared)
     calls = []
+    monkeypatch.setattr(
+        support_reclassify,
+        "prepare",
+        lambda: (
+            support_reclassify.Prepared(Counter(scanned=3, unchanged=3), {}, "updated")
+            if calls
+            else prepared
+        ),
+    )
     monkeypatch.setattr(
         support_reclassify.support_programs,
         "update_programs",
@@ -81,7 +91,8 @@ def test_write_failure_never_checkpoints_and_retry_replans(gate, monkeypatch):
     with pytest.raises(RuntimeError, match="incomplete"):
         support_refresh.refresh(plan_path=path, apply=True)
     assert not support_refresh.ready(info)
-    assert not list(path.parent.glob("*.lock"))
+    with support_refresh.exclusive(info):
+        pass
 
 
 def test_change_after_success_blocks_until_next_approval(gate):
@@ -98,16 +109,19 @@ def test_collectors_and_apply_share_exclusive_lock(gate):
     info, _, calls, path = gate
     with support_refresh.exclusive(info):
         support_refresh.collect_if_ready(lambda: calls.append("collect"))
-        with pytest.raises(FileExistsError):
+        with pytest.raises(OSError):
             support_refresh.refresh(plan_path=path)
     assert not calls
-    assert not list(path.parent.glob("*.lock"))
+    with support_refresh.exclusive(info):
+        pass
 
 
 def test_fingerprint_covers_new_helpers_not_tests(tmp_path, monkeypatch):
     worker = tmp_path / "worker"
     worker.mkdir()
     helper = worker / "new_helper.py"
+    (worker / "collectors").mkdir()
+    (worker / "collectors" / "kstartup.py").write_text("from worker.new_helper import RULE")
     helper.write_text("RULE = 1")
     monkeypatch.setattr(support_refresh, "ROOT", tmp_path)
     first = support_refresh.fingerprint()
@@ -175,7 +189,53 @@ def test_failed_reapply_invalidates_previous_checkpoint(gate, monkeypatch):
     support_refresh.refresh(plan_path=path)
     support_refresh.refresh(plan_path=path, apply=True)
     assert support_refresh.ready(info)
+    support_refresh.refresh(plan_path=path)
     monkeypatch.setattr(support_reclassify, "apply", lambda _: Counter(failed=1))
     with pytest.raises(RuntimeError, match="incomplete"):
         support_refresh.refresh(plan_path=path, apply=True)
     assert not support_refresh.ready(info)
+
+
+def test_unrelated_worker_edit_does_not_require_refresh(tmp_path, monkeypatch):
+    path = tmp_path / "worker" / "jobs"
+    path.mkdir(parents=True)
+    (path / "support_refresh.py").write_text("VALUE = 1")
+    monkeypatch.setattr(support_refresh, "ROOT", tmp_path)
+    first = support_refresh.fingerprint()
+    (path / "match_job.py").write_text("VALUE = 2")
+    assert support_refresh.fingerprint() == first
+
+
+def test_success_response_without_updated_data_is_not_completed(gate, monkeypatch):
+    info, prepared, _, path = gate
+    monkeypatch.setattr(support_reclassify, "prepare", lambda: prepared)
+    support_refresh.refresh(plan_path=path)
+    with pytest.raises(RuntimeError, match="verification"):
+        support_refresh.refresh(plan_path=path, apply=True)
+    assert not support_refresh.ready(info)
+
+
+def test_process_crash_releases_lock(gate):
+    info, _, _, path = gate
+    script = (
+        "import os; from pathlib import Path; "
+        "from worker.jobs import support_refresh as refresh; "
+        f"refresh.STATE_DIR = Path({str(path.parent)!r}); "
+        f"lock = refresh.exclusive({info!r}); "
+        "lock.__enter__(); os._exit(0)"
+    )
+    subprocess.run([sys.executable, "-c", script], check=True, timeout=15)
+    with support_refresh.exclusive(info):
+        pass
+
+
+def test_relative_normalizer_import_is_fingerprinted(tmp_path, monkeypatch):
+    path = tmp_path / "worker" / "collectors"
+    path.mkdir(parents=True)
+    (path / "kstartup.py").write_text("from .helper import RULE")
+    helper = path / "helper.py"
+    helper.write_text("RULE = 1")
+    monkeypatch.setattr(support_refresh, "ROOT", tmp_path)
+    first = support_refresh.fingerprint()
+    helper.write_text("RULE = 2")
+    assert first != support_refresh.fingerprint()

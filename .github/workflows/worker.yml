@@ -20,3 +20,12 @@ jobs:
       - run: ruff format --check worker
       - run: pytest -q
       - run: mypy worker
+  windows-support-refresh:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - run: python -m pytest -q worker/tests/test_support_refresh.py worker/tests/test_support_reclassify.py

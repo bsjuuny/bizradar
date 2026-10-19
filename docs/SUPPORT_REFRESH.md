@@ -9,10 +9,12 @@ and skip collection; G2B, matching and other jobs continue.
 
 ## What detects changes
 
-`support_refresh.fingerprint()` hashes all worker implementation `.py` files (excluding
-tests), including added helpers and the derived-column allowlist. This intentionally
-errs on the side of a refresh for unrelated worker edits too. It works without git on
-the deployment host. A checkpoint binds that fingerprint to the exact Supabase URL and
+`support_refresh.fingerprint()` starts from both support collectors, reclassification,
+the gate and the support repository, then follows local Python imports (including
+relative imports and imports inside functions). Changes to imported helpers, package
+initializers and the derived-column allowlist invalidate approval. Unrelated jobs and
+tests do not. Imports must be statically declared; if a helper is loaded dynamically,
+add it to `FINGERPRINT_ROOTS`. It works without git on the deployment host. A checkpoint binds that fingerprint to the exact Supabase URL and
 `DATA_MODE`. Missing, corrupt or mismatched checkpoints fail closed. Editing code under a
 running process also blocks collection: restart to load the new implementation.
 
@@ -22,7 +24,7 @@ rollback to different code requires a fresh reviewed plan. Normal approved hourl
 only check local files: no additional Supabase calls and no full-table scans. Existing
 K-Startup/BizInfo hash skips, bulk writes and match-score optimizations are unchanged.
 
-## First deployment and every subsequent worker change
+## First deployment and subsequent support implementation changes
 
 Run in the repo root using the same Python environment and vault/environment as PM2.
 The current project uses a local PC worker; a web deployment alone does not update it.
@@ -53,7 +55,10 @@ This change has **not** been applied to any live database or verified on that PC
    It re-reads/re-derives first. Any code, target, mode, snapshot or count change rejects
    the plan **before writing**. Generate and review a new plan if it became stale.
    The existing bare command no longer applies implicitly. Complete success writes an
-   atomic local checkpoint. Restart PM2 (`pm2 restart bizradar-worker`) and check its logs
+   atomic local checkpoint only after a read-back/reclassification confirms zero remaining
+   changes and zero failures. This adds one full paged read per apply, never per hourly
+   collection. A successful UPDATE response with unchanged stored rows fails verification.
+   Restart PM2 (`pm2 restart bizradar-worker`) and check its logs
    for the absence of `support refresh required` and for the next support collection.
 4. To verify idempotency, prepare another dry-run plan: it should show zero candidate
    changes unless the source data changed. This read-only check does not erase the
@@ -67,8 +72,8 @@ require a separate patch. No per-row version stamps, no hourly reclassification 
 new database migration are introduced. Recruiting, `last_seen_at`, `duplicate_of` and
 raw payloads are untouched. Dedupe remains in the existing collection job.
 
-The two scheduler wrappers and plan/apply commands use an exclusive per-target lock
-file. Concurrent commands on this checkout cannot collect while a refresh is running.
+The two scheduler wrappers and plan/apply commands use an exclusive per-target OS
+file lock (Windows `msvcrt`, POSIX `flock`). Concurrent commands on this checkout cannot collect while a refresh is running.
 This is **single-host coordination**, not a distributed database lock: other checkouts,
 manual job calls and external writers must be paused during review/apply. The database
 snapshot is checked before writing, not inside a database-wide transaction.
@@ -81,8 +86,10 @@ applied remotely, so inspect/replan rather than assuming rollback. No checkpoint
 written on failure. Some earlier chunks may already have succeeded; a new dry run
 safely excludes them. Refresh is idempotent, not transactional across chunks.
 
-A crashed process may leave a `.lock` file containing its PID. Confirm all relevant
-processes have stopped before removing that lock; it is deliberately never auto-expired.
+The OS automatically releases a lock when its process exits, including forced termination.
+The `.lock` file stays on disk and is reused. Do not delete/replace it while any worker
+or refresh command is running: on POSIX, locking a new file would bypass the original
+lock. A leftover file by itself does not block collection.
 A blocked collector logs the cause instead of assuming completion. Preserve logs/plans
 for the deployment review; never bypass the gate by writing a checkpoint manually.
 
@@ -93,4 +100,5 @@ partial write failures, invalid payloads, batching, dates, protected fields and 
 no-op behavior with both sources. `test_support_refresh.py` covers first deployment,
 reviewed apply, stale code/target/data rejection, no checkpoint on failure, exclusivity,
 helper fingerprint detection, stale loaded processes and scheduler wiring. GitHub Actions
-runs the worker suite, Ruff and mypy with no production secrets.
+runs the full worker suite, Ruff and mypy on Linux plus support refresh/reclassification
+tests on Windows, with no production secrets.
